@@ -1,0 +1,32 @@
+{% extends "base.html" %}{% block title %}الرئيسية{% endblock %}
+{% block content %}
+<h1>الرئيسية</h1>
+<div class="stats">
+  <div class="stat"><small>مبيعات اليوم</small><b>{{ sales_total|money }}</b> د.ك</div>
+  <div class="stat"><small>فواتير اليوم</small><b>{{ sales_count }}</b></div>
+  <a class="stat" href="/receipts?status=open"><small>سندات بانتظار الاستلام</small><b>{{ open_receipts }}</b></a>
+  <a class="stat" href="/counts?status=submitted"><small>جرد بانتظار الاعتماد</small><b>{{ pending_counts }}</b></a>
+  <div class="stat"><small>الأصناف الفعّالة</small><b>{{ products }}</b></div>
+</div>
+<div class="grid" style="align-items:start">
+  <div>
+    <h2>الأجهزة</h2>
+    <div class="table-wrap"><table><tr><th>الجهاز</th><th>آخر اتصال</th></tr>
+    {% for d in devices %}<tr><td>{{ d.name }}</td><td>{% if d.last_seen %}{% set mins = ((now - d.last_seen).total_seconds() // 60)|int %}{% if mins < 3 %}<span class="pill p-ok">متصل الآن</span>{% else %}<span class="pill p-warn">من {{ mins }} دقيقة</span>{% endif %}{% else %}<span class="pill p-gray">لم يتصل بعد</span>{% endif %}</td></tr>
+    {% else %}<tr><td colspan="2" class="muted">لا توجد أجهزة. {% if user.role == "admin" %}<a href="/devices">أضف جهاز</a>{% endif %}</td></tr>{% endfor %}
+    </table></div>
+    <h2>أصناف تحت حد الطلب</h2>
+    <div class="table-wrap"><table><tr><th>الصنف</th><th class="num">الرصيد</th><th class="num">حد الطلب</th></tr>
+    {% for p in low %}<tr><td><a href="/products/{{ p.id }}">{{ p.name }}</a></td><td class="num neg">{{ p.stock|qty(p.unit) }}</td><td class="num">{{ p.min_stock|qty(p.unit) }}</td></tr>
+    {% else %}<tr><td colspan="3" class="muted">لا يوجد</td></tr>{% endfor %}
+    </table></div>
+  </div>
+  <div>
+    <h2>آخر الفواتير</h2>
+    <div class="table-wrap"><table><tr><th>الوقت</th><th>الموظف</th><th class="num">المبلغ</th></tr>
+    {% for s in recent %}<tr><td><a href="/sales/{{ s.id }}">{{ s.created_at|dt }}</a></td><td>{{ s.employee.name if s.employee else '—' }}</td><td class="num">{{ s.total|money }}</td></tr>
+    {% else %}<tr><td colspan="3" class="muted">لا توجد فواتير بعد</td></tr>{% endfor %}
+    </table></div>
+  </div>
+</div>
+{% endblock %}

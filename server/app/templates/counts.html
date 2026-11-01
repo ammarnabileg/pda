@@ -1,0 +1,12 @@
+{% extends "base.html" %}{% block title %}الجرد{% endblock %}
+{% block content %}
+<h1>الجرد</h1>
+<p class="muted">الجرد اللي بيتعمل على الأجهزة بيوصل هنا. الأرصدة ما بتتغيرش غير لما تعتمده.</p>
+<div class="tabs">{% for k, l in [("submitted", "بانتظار الاعتماد"), ("approved", "معتمد"), ("rejected", "مرفوض"), ("all", "الكل")] %}<a href="?status={{ k }}" class="{{ 'on' if status == k }}">{{ l }}</a>{% endfor %}</div>
+<div class="table-wrap"><table><tr><th>التاريخ</th><th>الموظف</th><th>الجهاز</th><th>الأصناف</th><th>فيها فرق</th><th>الحالة</th></tr>
+{% for c in items %}{% set diffs = c.lines|rejectattr("diff", "eq", 0)|list %}
+<tr><td><a href="/counts/{{ c.id }}">{{ c.finished_at|dt }}</a></td><td>{{ c.employee.name if c.employee else '—' }}</td><td>{{ c.device.name }}</td><td>{{ c.lines|length }}</td>
+<td>{% if diffs %}<span class="pill p-red">{{ diffs|length }}</span>{% else %}<span class="pill p-ok">0</span>{% endif %}</td>
+<td>{% if c.status == 'submitted' %}<span class="pill p-warn">بانتظار الاعتماد</span>{% elif c.status == 'approved' %}<span class="pill p-ok">معتمد</span>{% else %}<span class="pill p-gray">مرفوض</span>{% endif %}</td></tr>
+{% else %}<tr><td colspan="6" class="muted">لا يوجد</td></tr>{% endfor %}</table></div>
+{% endblock %}

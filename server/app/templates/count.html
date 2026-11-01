@@ -1,0 +1,17 @@
+{% extends "base.html" %}{% block title %}جرد{% endblock %}
+{% block content %}
+<div class="bar"><h1>جرد {{ c.finished_at|dt }}</h1><button class="btn light no-print" onclick="print()">طباعة</button><a class="btn light no-print" href="/counts">رجوع</a></div>
+<p class="muted">الموظف: {{ c.employee.name if c.employee else '—' }} · الجهاز: {{ c.device.name }}
+{% if c.status != 'submitted' %} · راجعه: {{ c.reviewer.name if c.reviewer else '—' }} {{ c.reviewed_at|dt }}{% endif %}</p>
+<div class="stats"><div class="stat"><small>قيمة الفرق بسعر الشراء</small><b class="{{ 'neg' if value < 0 else 'pos' if value > 0 else 'zero' }}">{{ value|money }}</b> د.ك</div></div>
+<div class="table-wrap"><table><tr><th>الصنف</th><th class="num">في النظام وقت الاستلام</th><th class="num">المعدود</th><th>الفرق</th></tr>
+{% for l in c.lines %}<tr><td>{{ l.product.name }}</td><td class="num">{{ l.stock_at_sync|qty(l.product.unit) }}</td><td class="num">{{ l.counted|qty(l.product.unit) }}</td>
+<td>{% if l.diff == 0 %}<span class="zero">مطابق</span>{% elif l.diff < 0 %}<span class="neg">ناقص {{ base_text(l.product, -l.diff) }}</span>{% else %}<span class="pos">زيادة {{ base_text(l.product, l.diff) }}</span>{% endif %}</td></tr>{% endfor %}
+</table></div>
+{% if c.status == 'submitted' %}
+<div class="card no-print">
+  <p><b>الاعتماد</b> بيعدّل رصيد كل صنف بقيمة الفرق. أي بيع حصل بعد وصول الجرد بيتحسب صح.</p>
+  <form class="inline" method="post" action="/counts/{{ c.id }}/approve" onsubmit="return confirm('اعتماد الجرد وتعديل الأرصدة؟')"><button class="btn">اعتماد وتعديل الأرصدة</button></form>
+  <form class="inline" method="post" action="/counts/{{ c.id }}/reject" onsubmit="return confirm('رفض الجرد؟ الأرصدة مش هتتغير.')"><button class="btn red">رفض</button></form>
+</div>{% endif %}
+{% endblock %}

@@ -1,0 +1,15 @@
+{% extends "base.html" %}{% block title %}الإعداد الأول{% endblock %}
+{% block bare %}
+<div class="center-box">
+  <h1>إنشاء حساب المدير</h1>
+  <p class="muted">أول مرة تشغيل. الحساب ده بيدخل لوحة التحكم، والرقم السري بيدخل بيه على الأجهزة.</p>
+  {% include "_errors.html" %}
+  <form method="post" action="/setup">
+    <div class="field"><label>الاسم</label><input name="name" value="{{ form.name if form else '' }}" required></div>
+    <div class="field"><label>اسم المستخدم (للوحة التحكم)</label><input name="username" value="{{ form.username if form else '' }}" required dir="ltr"></div>
+    <div class="field"><label>كلمة السر (8 حروف على الأقل)</label><input name="password" type="password" required minlength="8"></div>
+    <div class="field"><label>الرقم السري للأجهزة (4–6 أرقام)</label><input name="pin" inputmode="numeric" pattern="[0-9]{4,6}" required dir="ltr"></div>
+    <button class="btn" style="width:100%;justify-content:center">إنشاء</button>
+  </form>
+</div>
+{% endblock %}

@@ -1,0 +1,13 @@
+{% extends "base.html" %}{% block title %}تسجيل الدخول{% endblock %}
+{% block bare %}
+<div class="center-box">
+  <h1>◆ تموين</h1>
+  {% if flash %}<div class="alert {{ flash.kind }}">{{ flash.msg }}</div>{% endif %}
+  {% if error %}<div class="alert error">{{ error }}</div>{% endif %}
+  <form method="post" action="/login">
+    <div class="field"><label>اسم المستخدم</label><input name="username" value="{{ username or '' }}" autofocus required></div>
+    <div class="field"><label>كلمة السر</label><input name="password" type="password" required></div>
+    <button class="btn" style="width:100%;justify-content:center">دخول</button>
+  </form>
+</div>
+{% endblock %}

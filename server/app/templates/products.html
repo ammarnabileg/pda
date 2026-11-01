@@ -1,0 +1,24 @@
+{% extends "base.html" %}{% block title %}الأصناف{% endblock %}
+{% block content %}
+<div class="bar"><h1>الأصناف</h1>
+  <a class="btn light" href="/products-import">استيراد من Excel/CSV</a>
+  <a class="btn" href="/products/new">+ صنف جديد</a></div>
+<form class="bar" method="get">
+  <input name="q" value="{{ q }}" placeholder="ابحث بالاسم أو الباركود" style="max-width:340px" autofocus>
+  <label class="check"><input type="checkbox" name="low" value="1" {{ 'checked' if low }}> تحت حد الطلب فقط</label>
+  <label class="check"><input type="checkbox" name="inactive" value="1" {{ 'checked' if inactive }}> عرض الموقوفة</label>
+  <button class="btn light">بحث</button>
+</form>
+<div class="table-wrap"><table>
+<tr><th>الصنف</th><th>الباركود</th><th>الوحدة</th><th class="num">سعر البيع</th><th class="num">سعر الشراء</th><th class="num">الرصيد</th><th></th></tr>
+{% for p in items %}
+<tr><td><a href="/products/{{ p.id }}">{{ p.name }}</a> {% if not p.active %}<span class="pill p-gray">موقوف</span>{% endif %}</td>
+<td dir="ltr" style="text-align:right">{{ p.barcode }}</td>
+<td>{{ UNITS[p.unit] }}{% if p.carton %} · كرتون {{ p.carton }}{% endif %}</td>
+<td class="num">{{ p.price|money }}</td><td class="num">{{ p.cost|money }}</td>
+<td class="num {{ 'neg' if p.min_stock > 0 and p.stock <= p.min_stock }}">{{ p.stock|qty(p.unit) }}</td>
+<td><a href="/products/{{ p.id }}">تعديل</a></td></tr>
+{% else %}<tr><td colspan="7" class="muted">لا توجد أصناف{% if q %} بهذا البحث{% endif %}.</td></tr>{% endfor %}
+</table></div>
+{% if items|length == 500 %}<p class="muted">يتم عرض أول 500 صنف. استخدم البحث.</p>{% endif %}
+{% endblock %}

@@ -1,0 +1,14 @@
+{% extends "base.html" %}{% block title %}النسخ الاحتياطي{% endblock %}
+{% block content %}
+<h1>النسخ الاحتياطي</h1>
+<div class="card">
+  <p><b>مهم:</b> كل بيانات الجمعية على الكمبيوتر ده. لو الهارد باظ من غير نسخة احتياطية، البيانات كلها هتضيع.</p>
+  {% if available %}
+  <p><a class="btn" href="/backup/download">تنزيل نسخة احتياطية الآن</a></p>
+  <p class="muted">احفظ الملف على فلاشة أو Google Drive، مش على نفس الكمبيوتر. الأفضل يومياً.</p>
+  {% else %}
+  <div class="alert error">برنامج pg_dump مش موجود على الكمبيوتر ده، فالتنزيل من هنا مش متاح. استخدم سكربت النسخ في مجلد السيرفر (اقرأ README).</div>
+  {% endif %}
+  <p class="muted">للنسخ التلقائي اليومي: شغّل <code>scripts/backup.py</code> من «Task Scheduler» في ويندوز. الخطوات في README.</p>
+</div>
+{% endblock %}

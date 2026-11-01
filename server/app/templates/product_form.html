@@ -1,0 +1,41 @@
+{% extends "base.html" %}{% block title %}{{ p.name if p else 'صنف جديد' }}{% endblock %}
+{% block content %}
+{% macro v(field, default='') %}{% if form %}{{ form.get(field, default) or '' }}{% elif p %}{{ p[field] }}{% else %}{{ default }}{% endif %}{% endmacro %}
+<div class="bar"><h1>{{ p.name if p else 'صنف جديد' }}</h1><a class="btn light" href="/products">رجوع للأصناف</a></div>
+{% include "_errors.html" %}
+<form method="post" action="{{ '/products/%d' % p.id if p else '/products/new' }}" class="card">
+  <div class="grid">
+    <div class="field"><label>الباركود</label><input name="barcode" value="{{ v('barcode') }}" required dir="ltr" autofocus><div class="hint">امسحه بقارئ الباركود أو اكتبه</div></div>
+    <div class="field"><label>اسم الصنف</label><input name="name" value="{{ v('name') }}" required></div>
+    <div class="field"><label>الوحدة</label>
+      {% set unit = (form.get('unit') if form else (p.unit if p else 'piece')) %}
+      <select name="unit" id="unit"><option value="piece" {{ 'selected' if unit == 'piece' }}>بالحبة</option><option value="kg" {{ 'selected' if unit == 'kg' }}>بالكيلو (موزون)</option></select></div>
+    <div class="field" id="carton-field"><label>عدد الحبات في الكرتون</label><input name="carton" value="{{ v('carton', '0') }}" inputmode="numeric"><div class="hint">0 لو الصنف مالوش كرتون</div></div>
+    <div class="field"><label>سعر البيع (د.ك)</label><input name="price" value="{{ v('price') }}" inputmode="decimal" required dir="ltr"></div>
+    <div class="field"><label>سعر الشراء (د.ك)</label><input name="cost" value="{{ v('cost', '0') }}" inputmode="decimal" dir="ltr"><div class="hint">لا يظهر على أجهزة الكاشير</div></div>
+    <div class="field"><label>حد الطلب</label><input name="min_stock" value="{{ v('min_stock', '0') }}" inputmode="decimal" dir="ltr"><div class="hint">ينبهك لما الرصيد يوصل له</div></div>
+    {% if not p %}<div class="field"><label>الرصيد الافتتاحي</label><input name="stock" value="{{ v('stock', '0') }}" inputmode="decimal" dir="ltr"></div>{% endif %}
+  </div>
+  {% set active = (form.get('active') == '1' if form else (p.active if p else True)) %}
+  <label class="check" style="margin:6px 0 14px"><input type="checkbox" name="active" value="1" {{ 'checked' if active }}> الصنف فعّال (يظهر على الأجهزة)</label>
+  <button class="btn">حفظ</button>
+</form>
+{% if p %}
+<h2>الرصيد: {{ base_text(p, p.stock) }}</h2>
+<form method="post" action="/products/{{ p.id }}/stock" class="card bar">
+  <div style="flex:1;min-width:150px"><label>الرصيد الصحيح</label><input name="stock" inputmode="decimal" dir="ltr" required></div>
+  <div style="flex:2;min-width:200px"><label>السبب</label><input name="note" placeholder="مثال: تالف، هدية، تصحيح" required></div>
+  <button class="btn light" style="align-self:end">تعديل الرصيد يدوياً</button>
+</form>
+<h2>آخر حركات المخزون</h2>
+<div class="table-wrap"><table><tr><th>الوقت</th><th>النوع</th><th class="num">الكمية</th><th>مرجع / ملاحظة</th></tr>
+{% set reasons = {"sale": "بيع", "receipt": "استلام", "count": "جرد", "manual": "يدوي"} %}
+{% for m in moves %}<tr><td>{{ m.created_at|dt }}</td><td>{{ reasons[m.reason] }}</td><td class="num {{ 'neg' if m.delta < 0 else 'pos' }}">{{ m.delta|qty(p.unit) }}</td><td>{{ m.note or m.ref or '' }}</td></tr>
+{% else %}<tr><td colspan="4" class="muted">لا توجد حركات</td></tr>{% endfor %}
+</table></div>
+{% endif %}
+<script>
+const u=document.getElementById('unit'),c=document.getElementById('carton-field');
+function sync(){c.style.display=u.value==='kg'?'none':''}u.addEventListener('change',sync);sync()
+</script>
+{% endblock %}

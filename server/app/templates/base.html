@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>{% block title %}لوحة التحكم{% endblock %} | تموين</title>
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+{% if user %}
+<div class="layout">
+  <nav class="side">
+    <div class="brand">◆ تموين</div>
+    {% set links = [("/", "الرئيسية"), ("/products", "الأصناف"), ("/receipts", "استلام الموردين"), ("/suppliers", "الموردين"), ("/sales", "المبيعات"), ("/reports", "التقارير"), ("/counts", "الجرد")] %}
+    {% if user.role == "admin" %}{% set links = links + [("/employees", "الموظفين"), ("/devices", "الأجهزة"), ("/backup", "النسخ الاحتياطي")] %}{% endif %}
+    {% for href, label in links %}
+      <a href="{{ href }}" class="{{ 'on' if (href == '/' and path == '/') or (href != '/' and path.startswith(href)) }}">{{ label }}</a>
+    {% endfor %}
+    <div class="who">{{ user.name }} · {{ ROLES[user.role] }}<br>
+      <form method="post" action="/logout"><button>تسجيل الخروج</button></form></div>
+  </nav>
+  <main class="main">
+    {% if flash %}<div class="alert {{ flash.kind }}">{{ flash.msg }}</div>{% endif %}
+    {% block content %}{% endblock %}
+  </main>
+</div>
+{% else %}
+  {% block bare %}{% endblock %}
+{% endif %}
+</body>
+</html>

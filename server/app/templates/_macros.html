@@ -1,0 +1,4 @@
+{% macro row(product, mode, qty) %}<tr><td><input name="product" list="plist" value="{{ product }}" autocomplete="off"></td>
+<td><select name="mode">{% for k, l in MODES.items() %}<option value="{{ k }}" {{ 'selected' if k == mode }}>{{ l }}</option>{% endfor %}</select></td>
+<td><input name="qty" value="{{ qty }}" inputmode="decimal" dir="ltr" style="max-width:120px"></td>
+<td><button type="button" class="btn small light" onclick="this.closest('tr').remove()">حذف</button></td></tr>{% endmacro %}

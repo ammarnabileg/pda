@@ -1,0 +1,34 @@
+{% extends "base.html" %}{% block title %}{{ 'تعديل السند %d' % r.id if r else 'سند استلام جديد' }}{% endblock %}
+{% block content %}
+{% from "_macros.html" import row %}
+<div class="bar"><h1>{{ 'تعديل السند %d' % r.id if r else 'سند استلام جديد' }}</h1><a class="btn light" href="{{ '/receipts/%d' % r.id if r else '/receipts' }}">رجوع</a></div>
+<p class="muted">اكتب الكميات المطلوبة من المورد. الموظف بيراجعها على الجهاز وقت وصول البضاعة.</p>
+{% include "_errors.html" %}
+{% if not suppliers %}<div class="alert error">لازم تضيف مورد الأول من <a href="/suppliers">صفحة الموردين</a>.</div>{% endif %}
+{% set sel_sup = (form.get('supplier_id')|int if form else (r.supplier_id if r else 0)) %}
+<form method="post" class="card">
+  <div class="grid">
+    <div class="field"><label>المورد</label><select name="supplier_id" required><option value="">اختار…</option>{% for s in suppliers %}<option value="{{ s.id }}" {{ 'selected' if s.id == sel_sup }}>{{ s.name }}</option>{% endfor %}</select></div>
+    <div class="field"><label>ملاحظة (تظهر للموظف)</label><input name="note" value="{{ form.get('note', '') if form else (r.note or '' if r else '') }}"></div>
+  </div>
+  <datalist id="plist">{% for p in products %}<option value="{{ p.barcode }} — {{ p.name }}">{% endfor %}</datalist>
+  <div class="table-wrap"><table class="lines" id="lines"><tr><th>الصنف (امسح الباركود أو اكتب الاسم)</th><th>الوحدة</th><th>الكمية</th><th></th></tr>
+  {% if form %}
+    {% for i in range(form.getlist('product')|length) %}{{ row(form.getlist('product')[i], form.getlist('mode')[i], form.getlist('qty')[i]) }}{% endfor %}
+  {% elif r %}
+    {% for l in r.lines if not l.extra %}{{ row(l.product.barcode ~ ' — ' ~ l.product.name, l.mode, l.ordered|qty(l.product.unit)) }}{% endfor %}
+  {% endif %}
+  </table></div>
+  <button type="button" class="btn light" onclick="addRow()">+ سطر</button>
+  <div style="margin-top:16px"><button class="btn">حفظ السند</button></div>
+</form>
+<template id="tpl">{{ row('', 'carton', '') }}</template>
+<script>
+const t=document.getElementById('tpl'),tb=document.getElementById('lines').tBodies[0]||document.getElementById('lines')
+function addRow(){const n=t.content.cloneNode(true);tb.appendChild(n);const i=tb.querySelectorAll('input[name=product]');i[i.length-1].focus()}
+if(tb.querySelectorAll('input[name=product]').length===0){addRow();addRow();addRow()}
+// Scanners send Enter after the barcode: move to the quantity box instead of submitting the form.
+document.addEventListener('keydown',e=>{if(e.key==='Enter'&&e.target.name==='product'){e.preventDefault();e.target.closest('tr').querySelector('input[name=qty]').focus()}
+  if(e.key==='Enter'&&e.target.name==='qty'){e.preventDefault();addRow()}})
+</script>
+{% endblock %}

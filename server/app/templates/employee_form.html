@@ -1,0 +1,23 @@
+{% extends "base.html" %}{% block title %}{{ e.name if e else 'موظف جديد' }}{% endblock %}
+{% block content %}
+<div class="bar"><h1>{{ e.name if e else 'موظف جديد' }}</h1><a class="btn light" href="/employees">رجوع</a></div>
+{% include "_errors.html" %}
+{% set role = form.get('role') if form else e.role %}
+{% set active = (form.get('active') == '1') if form else e.active %}
+<form method="post" action="/employees/{{ e.id if e else 'new' }}" class="card">
+  <div class="grid">
+    <div class="field"><label>الاسم</label><input name="name" value="{{ form.get('name', '') if form else e.name }}" required></div>
+    <div class="field"><label>الوظيفة</label><select name="role" id="role">{% for k, l in ROLES.items() %}<option value="{{ k }}" {{ 'selected' if k == role }}>{{ l }}</option>{% endfor %}</select></div>
+    <div class="field"><label>الرقم السري للجهاز (4–6 أرقام)</label><input name="pin" inputmode="numeric" pattern="[0-9]{4,6}" dir="ltr" {{ 'required' if not e }} autocomplete="off">
+      {% if e %}<div class="hint">سيبه فاضي لو مش عايز تغيّره</div>{% endif %}</div>
+  </div>
+  <div id="dash" class="grid">
+    <div class="field"><label>اسم المستخدم للوحة التحكم (اختياري)</label><input name="username" value="{{ form.get('username', '') if form else (e.username or '' if e else '') }}" dir="ltr" autocomplete="off"></div>
+    <div class="field"><label>كلمة السر للوحة التحكم</label><input name="password" type="password" autocomplete="new-password">{% if e and e.password_hash %}<div class="hint">سيبها فاضية لو مش عايز تغيّرها</div>{% endif %}</div>
+  </div>
+  <label class="check" style="margin:6px 0 14px"><input type="checkbox" name="active" value="1" {{ 'checked' if active }}> فعّال</label>
+  <p class="hint">إيقاف الموظف بيمنعه من الدخول على الأجهزة بعد أول مزامنة.</p>
+  <button class="btn">حفظ</button>
+</form>
+<script>const r=document.getElementById('role'),d=document.getElementById('dash');function s(){d.style.display=(r.value==='supervisor'||r.value==='admin')?'':'none'}r.addEventListener('change',s);s()</script>
+{% endblock %}

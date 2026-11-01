@@ -1,0 +1,30 @@
+{% extends "base.html" %}{% block title %}التقارير{% endblock %}
+{% block content %}
+<div class="bar"><h1>تقرير المبيعات</h1><a class="btn light" href="{{ csv_url }}">تنزيل Excel (CSV)</a></div>
+<form class="bar card" method="get">
+  <div><label>من</label><input type="date" name="d_from" value="{{ d_from }}"></div>
+  <div><label>إلى</label><input type="date" name="d_to" value="{{ d_to }}"></div>
+  <button class="btn" style="align-self:end">عرض</button>
+</form>
+<div class="stats">
+  <div class="stat"><small>الفواتير</small><b>{{ totals.count }}</b></div>
+  <div class="stat"><small>المبيعات</small><b>{{ totals.sales|money }}</b> د.ك</div>
+  <div class="stat"><small>تكلفة البضاعة</small><b>{{ totals.cost|money }}</b> د.ك</div>
+  <div class="stat"><small>إجمالي الربح</small><b class="{{ 'neg' if totals.profit < 0 }}">{{ totals.profit|money }}</b> د.ك</div>
+</div>
+<p class="hint">التكلفة محسوبة بسعر الشراء المسجل للصنف وقت البيع.</p>
+<h2>حسب اليوم</h2>
+<div class="table-wrap"><table><tr><th>اليوم</th><th class="num">الفواتير</th><th class="num">المبيعات</th><th class="num">الربح</th></tr>
+{% for d in days %}<tr><td><a href="/sales?d_from={{ d[0] }}&d_to={{ d[0] }}">{{ d[0] }}</a></td><td class="num">{{ d[1] }}</td><td class="num">{{ d[2]|money }}</td><td class="num">{{ ((d[2] or 0) - (d[3] or 0))|money }}</td></tr>
+{% else %}<tr><td colspan="4" class="muted">لا توجد مبيعات</td></tr>{% endfor %}</table></div>
+<div class="grid" style="align-items:start">
+<div><h2>الأكثر مبيعاً</h2>
+<div class="table-wrap"><table><tr><th>الصنف</th><th class="num">الكمية</th><th class="num">المبيعات</th></tr>
+{% for p, q, t in top %}<tr><td><a href="/products/{{ p.id }}">{{ p.name }}</a></td><td>{{ q|qty(p.unit) }} {{ UNITS[p.unit] }}</td><td class="num">{{ t|money }}</td></tr>
+{% else %}<tr><td colspan="3" class="muted">—</td></tr>{% endfor %}</table></div></div>
+<div><h2>حسب الموظف</h2>
+<div class="table-wrap"><table><tr><th>الموظف</th><th class="num">الفواتير</th><th class="num">المبيعات</th></tr>
+{% for n, c, t in by_emp %}<tr><td>{{ n or '—' }}</td><td class="num">{{ c }}</td><td class="num">{{ t|money }}</td></tr>
+{% else %}<tr><td colspan="3" class="muted">—</td></tr>{% endfor %}</table></div></div>
+</div>
+{% endblock %}

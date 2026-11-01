@@ -1,0 +1,20 @@
+{% extends "base.html" %}{% block title %}استيراد الأصناف{% endblock %}
+{% block content %}
+<div class="bar"><h1>استيراد الأصناف من ملف</h1><a class="btn light" href="/products">رجوع</a></div>
+{% include "_errors.html" %}
+<div class="card">
+  <p>1. نزّل <a href="/products-import/template.csv">ملف النموذج</a> وافتحه في Excel.</p>
+  <p>2. املأ الأصناف بنفس الأعمدة: <code dir="ltr">{{ columns|join(", ") }}</code></p>
+  <ul class="muted">
+    <li><b>unit</b>: <code>piece</code> بالحبة أو <code>kg</code> بالكيلو.</li>
+    <li><b>carton</b>: عدد الحبات في الكرتون، أو 0.</li>
+    <li><b>stock</b>: الرصيد الحالي. لو سبته فاضي، الرصيد الموجود ما يتغيرش.</li>
+    <li>لو الباركود موجود قبل كده، الصنف بيتحدّث بدل ما يتكرر.</li>
+  </ul>
+  <p>3. احفظه من Excel بصيغة <b>CSV UTF-8</b> وارفعه هنا. لو فيه أي سطر غلط، مفيش حاجة هتتحفظ لحد ما تصلحه.</p>
+  <form method="post" enctype="multipart/form-data" class="bar">
+    <input type="file" name="file" accept=".csv,text/csv" required style="max-width:360px">
+    <button class="btn">رفع واستيراد</button>
+  </form>
+</div>
+{% endblock %}
