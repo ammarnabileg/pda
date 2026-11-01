@@ -4,3 +4,7 @@ __pycache__/
 .pytest_cache/
 *.dump
 .venv/
+.secrets/
+logs/
+backup-task.cmd
+server-task.cmd
