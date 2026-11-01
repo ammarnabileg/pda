@@ -25,13 +25,15 @@ function Warn($t) { Write-Host "   $t" -ForegroundColor Yellow }
 
 # Runs a native program and stops the setup if it fails.
 function Exec([string]$What, [scriptblock]$Cmd) {
-    $out = & $Cmd 2>&1
+    $ErrorActionPreference = "Continue"
+    $out = & $Cmd 2>&1 | ForEach-Object { "$_" }
     if ($LASTEXITCODE -ne 0) { throw "$What failed (exit $LASTEXITCODE): $($out | Out-String)" }
     return $out
 }
 
 # Only Administrators, SYSTEM and the current user can read the path.
 function Protect([string]$Path) {
+    $ErrorActionPreference = "Continue"
     $User = [Security.Principal.WindowsIdentity]::GetCurrent().Name
     $f = if (Test-Path $Path -PathType Container) { "(OI)(CI)F" } else { "F" }
     $out = icacls $Path /inheritance:r /grant:r "${User}:$f" "*S-1-5-32-544:$f" "*S-1-5-18:$f" 2>&1
@@ -61,6 +63,7 @@ function Need-Winget {
 
 function Winget-Install([string]$Id, [string[]]$Extra) {
     Need-Winget
+    $ErrorActionPreference = "Continue"
     & winget install --id $Id -e --silent --accept-package-agreements --accept-source-agreements @Extra
     # 0 = installed; -1978335189 (0x8A15002B) = already installed / no newer version.
     if ($LASTEXITCODE -ne 0 -and $LASTEXITCODE -ne -1978335189) { throw "winget could not install $Id (exit $LASTEXITCODE)." }
@@ -68,12 +71,14 @@ function Winget-Install([string]$Id, [string[]]$Extra) {
 
 # ---------------------------------------------------------------- Python
 function Python-Ok([string]$Exe) {
+    $ErrorActionPreference = "Continue"
     if (-not $Exe -or -not (Test-Path $Exe) -or $Exe -like "*WindowsApps*") { return $false }
     & $Exe -c "import sys; sys.exit(0 if sys.version_info >= (3, 11) else 1)" 2>$null
     return $LASTEXITCODE -eq 0
 }
 
 function Find-Python {
+    $ErrorActionPreference = "Continue"
     Refresh-Path
     $c = @("$env:ProgramFiles\Python312\python.exe", "$env:LOCALAPPDATA\Programs\Python\Python312\python.exe")
     $py = Get-Command py.exe -ErrorAction SilentlyContinue
@@ -167,13 +172,16 @@ else { $SuperPw = Read-Secret "PostgreSQL was installed before. Type the passwor
 
 function Psql([string]$Db, [string]$Sql) {
     $env:PGPASSWORD = $SuperPw
-    try { Exec "psql ($Sql)" { & $Psql -h $DbHost -p $DbPort -U $SuperUser -d $Db -v ON_ERROR_STOP=1 -tAc $Sql } }
+    try { (Exec "psql ($Sql)" { & $Psql -h $DbHost -p $DbPort -U $SuperUser -d $Db -q -v ON_ERROR_STOP=1 -tAc $Sql } |
+        Where-Object { $_ -and $_ -notmatch '^(NOTICE|WARNING):' } | Select-Object -Last 1) }
     finally { Remove-Item Env:PGPASSWORD -ErrorAction SilentlyContinue }
 }
 
 $env:PGPASSWORD = $SuperPw
+$ErrorActionPreference = "Continue"
 & $Psql -h $DbHost -p $DbPort -U $SuperUser -d postgres -tAc "SELECT 1" 2>$null | Out-Null
 $loginOk = $LASTEXITCODE -eq 0
+$ErrorActionPreference = "Stop"
 Remove-Item Env:PGPASSWORD -ErrorAction SilentlyContinue
 if (-not $loginOk) { throw "Cannot log in to PostgreSQL as '$SuperUser'. Check the password and run setup again." }
 # Keep the working superuser login so backups can run a restore test and a rerun never asks again.
