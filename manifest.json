@@ -1,0 +1,13 @@
+{
+  "name": "تموين | جهاز الجمعية",
+  "short_name": "تموين",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#eef1ef",
+  "theme_color": "#123f37",
+  "lang": "ar",
+  "dir": "rtl",
+  "icons": [{ "src": "icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" }]
+}
