@@ -194,4 +194,42 @@ void main() {
     expect(kinds, containsAll(['counts', 'receipts']));
     await tester.pump(const Duration(seconds: 30));
   });
+
+  testWidgets('scanner that injects text, and a scanner with no Enter suffix', (tester) async {
+    await startApp(tester);
+    await login(tester, 'أحمد', '2222');
+    await tester.tap(find.text('بيع'));
+    await settle(tester);
+
+    // Mode 1: the wedge writes the code into the focused field and presses Enter.
+    final field = find.byKey(const Key('scanner-input'));
+    expect(field, findsOneWidget);
+    // The input connection is open (needed for injected text), but with type "none",
+    // so Android never shows the on-screen keyboard.
+    expect(tester.testTextInput.setClientArgs!['inputType']['name'], 'TextInputType.none');
+    tester.testTextInput.enterText('6281000123456');
+    await tester.testTextInput.receiveAction(TextInputAction.done);
+    await settle(tester);
+    expect(find.text('أرز بسمتي ٥ كجم'), findsOneWidget);
+    expect(find.text('1 حبة'), findsOneWidget);
+
+    // Mode 2: key events at scanner speed with no Enter at the end.
+    for (final ch in '6281000123456'.split('')) {
+      await tester.sendKeyEvent(keys[ch]!);
+    }
+    await tester.pump(const Duration(milliseconds: 200));
+    await settle(tester);
+    expect(find.text('2 حبة'), findsOneWidget);
+
+    // Slow typing (a person on a hardware keypad) is not taken as a scan without Enter.
+    // The app measures real time between characters, so wait in real time here.
+    for (final ch in '62810001'.split('')) {
+      await tester.sendKeyEvent(keys[ch]!);
+      await tester.runAsync(() => Future.delayed(const Duration(milliseconds: 150)));
+    }
+    await tester.pump(const Duration(milliseconds: 300));
+    await settle(tester);
+    expect(find.text('الصنف غير مسجل'), findsNothing);
+    await tester.pump(const Duration(seconds: 30));
+  });
 }
