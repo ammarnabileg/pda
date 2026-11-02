@@ -89,6 +89,12 @@ Future<LocalDb> seededDb() async {
   return db;
 }
 
+/// Waits until the confirmation bar at the bottom has gone (it covers the lowest rows).
+Future<void> noToast(WidgetTester tester) async {
+  await tester.pump(const Duration(seconds: 7));
+  await tester.pumpAndSettle();
+}
+
 Future<void> scan(WidgetTester tester, String code) async {
   for (final ch in code.split('')) {
     await tester.sendKeyEvent(keys[ch]!);
@@ -217,6 +223,9 @@ void main() {
     await tester.tap(find.text('حفظ'));
     await settle(tester);
     await scan(tester, '6281000123456');
+    await settle(tester);
+    expect(find.text('معدود قبل كده: 12 حبة (2 كرتون)'), findsOneWidget);
+    await tester.tap(find.text('زوّد على نفس البند'));
     await settle(tester);
     await tester.tap(find.text('5').last);
     await tester.tap(find.text('حفظ'));
@@ -347,6 +356,7 @@ void main() {
     }
     await scan(tester, '6281000123456');
     await settle(tester);
+    await noToast(tester);
     expect(find.widgetWithText(QtyStepper, '3 حبة'), findsOneWidget);
     expect(find.text('38.250'), findsOneWidget); // 3 x 12.750, kept whole next to the long name
     // Details sheet shows the purchase price.
@@ -383,10 +393,36 @@ void main() {
     await settle(tester);
     expect(find.widgetWithText(QtyStepper, '1 كرتون'), findsOneWidget);
     expect(find.text('14.700'), findsWidgets); // 6 x 2.450
+    // Same product, other unit: the app asks.
     await scan(tester, '6281000123999');
     await settle(tester);
+    expect(find.text('موجود في الفاتورة: 1 كرتون\nالمسح ده: 1 حبة'), findsOneWidget);
+    await tester.tap(find.text('اعمله بند جديد'));
+    await settle(tester);
     expect(find.widgetWithText(QtyStepper, '1 حبة'), findsOneWidget);
+    expect(find.widgetWithText(QtyStepper, '1 كرتون'), findsOneWidget);
     expect(find.text('17.150'), findsOneWidget); // 14.700 + 2.450
+    // Same unit as an existing line goes straight onto it.
+    await scan(tester, '16281000123453');
+    await settle(tester);
+    expect(find.widgetWithText(QtyStepper, '2 كرتون'), findsOneWidget);
+    await tester.pump(const Duration(seconds: 30));
+  });
+
+  testWidgets('other unit, added to the old line: 1 piece + 1 carton = 7 pieces', (tester) async {
+    await startApp(tester);
+    await login(tester, 'أحمد', '2222');
+    await tester.tap(find.text('بيع'));
+    await settle(tester);
+    await scan(tester, '6281000123456');
+    await settle(tester);
+    await scan(tester, '16281000123453');
+    await settle(tester);
+    expect(find.text('موجود في الفاتورة: 1 حبة\nالمسح ده: 1 كرتون'), findsOneWidget);
+    await tester.tap(find.text('زوّد على البند القديم'));
+    await settle(tester);
+    expect(find.widgetWithText(QtyStepper, '7 حبة'), findsOneWidget);
+    expect(find.text('17.150'), findsWidgets);
     await tester.pump(const Duration(seconds: 30));
   });
 
@@ -401,6 +437,94 @@ void main() {
     await tester.tap(find.text('حفظ'));
     await settle(tester);
     expect(find.textContaining('12 حبة (2 كرتون)', findRichText: true), findsOneWidget);
+    await tester.pump(const Duration(seconds: 30));
+  });
+
+  testWidgets('same unit twice: added to the line, with a "separate line" option', (tester) async {
+    final app = await startApp(tester);
+    await login(tester, 'أحمد', '2222');
+    await tester.tap(find.text('بيع'));
+    await settle(tester);
+    await scan(tester, '6281000123456');
+    await settle(tester);
+    await scan(tester, '6281000123456');
+    await settle(tester);
+    expect(find.widgetWithText(QtyStepper, '2 حبة'), findsOneWidget);
+    await tester.tap(find.text('بند منفصل'));
+    await settle(tester);
+    await noToast(tester);
+    expect(find.widgetWithText(QtyStepper, '1 حبة'), findsNWidgets(2));
+    // Finish and find it in the device's invoice history.
+    await tester.tap(find.text('إنهاء البيع'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('تم الدفع'));
+    await settle(tester, 800);
+    final out = (await tester.runAsync(() => app.db.pendingOutbox()))!;
+    expect(out.single['payload'].toString().split('product_id').length - 1, 2, reason: 'two separate lines are sent');
+    await tester.tap(find.text('سجل الفواتير'));
+    await settle(tester);
+    expect(find.text('4.900'), findsOneWidget);
+    expect(find.text('على الجهاز'), findsOneWidget, reason: 'not sent yet: offline');
+    await tester.tap(find.text('4.900'));
+    await settle(tester);
+    expect(find.text('أرز بسمتي ٥ كجم'), findsNWidgets(2));
+    await tester.pump(const Duration(seconds: 30));
+  });
+
+  testWidgets('count: a second shelf is a separate entry, sent as one total per product', (tester) async {
+    final app = await startApp(tester);
+    await login(tester, 'محمود', '3333');
+    await tester.tap(find.text('جرد'));
+    await settle(tester);
+    await scan(tester, '6281000123456');
+    await settle(tester);
+    await tester.tap(find.text('4').last);
+    await tester.tap(find.text('حفظ'));
+    await settle(tester);
+    await scan(tester, '6281000123456');
+    await settle(tester);
+    await tester.tap(find.text('بند جديد (رف أو مكان تاني)'));
+    await settle(tester);
+    await tester.tap(find.text('3').last);
+    await tester.tap(find.text('حفظ'));
+    await settle(tester);
+    expect(find.textContaining('العدد', findRichText: true), findsNothing);
+    expect(find.textContaining('4 حبة', findRichText: true), findsOneWidget);
+    expect(find.textContaining('3 حبة', findRichText: true), findsOneWidget);
+    expect(find.text('1 صنف معدود'), findsOneWidget);
+    await tester.tap(find.textContaining('إنهاء الجرد'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('نعم، إنهاء'));
+    await settle(tester, 800);
+    final out = (await tester.runAsync(() => app.db.pendingOutbox()))!;
+    expect(out.single['payload'].toString(), contains('"counted":"7.000"'));
+    await tester.pump(const Duration(seconds: 30));
+  });
+
+  testWidgets('receiving: a note on one item is sent and kept in the history', (tester) async {
+    final app = await startApp(tester);
+    await login(tester, 'محمود', '3333');
+    await tester.tap(find.text('استلام'));
+    await settle(tester);
+    await tester.tap(find.text('شركة المواد الغذائية'));
+    await settle(tester);
+    await tester.tap(find.text('كامل'));
+    await settle(tester);
+    await tester.tap(find.bySemanticsLabel('ملاحظة على الصنف'));
+    await settle(tester);
+    await tester.tap(find.widgetWithText(ActionChip, 'كرتون تالف'));
+    await tester.pump();
+    await tester.tap(find.text('حفظ'));
+    await settle(tester);
+    expect(find.textContaining('ملاحظة: كرتون تالف', findRichText: true), findsOneWidget);
+    await tester.tap(find.text('تأكيد الاستلام'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('نعم، تأكيد'));
+    await settle(tester, 800);
+    final out = (await tester.runAsync(() => app.db.pendingOutbox()))!;
+    expect(out.single['payload'].toString(), contains('"note":"كرتون تالف"'));
+    final hist = (await tester.runAsync(() => app.db.history('receipts')))!;
+    expect(hist.single.data['lines'][0]['note'], 'كرتون تالف');
     await tester.pump(const Duration(seconds: 30));
   });
 }

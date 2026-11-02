@@ -17,7 +17,7 @@ class LocalDb {
     final file = path ?? p.join(await f.getDatabasesPath(), 'tamween.db');
     final db = await f.openDatabase(
       file,
-      options: OpenDatabaseOptions(version: 3, onCreate: _create, onUpgrade: _upgrade),
+      options: OpenDatabaseOptions(version: 4, onCreate: _create, onUpgrade: _upgrade),
     );
     return LocalDb(db);
   }
@@ -28,11 +28,18 @@ class LocalDb {
       // Purchase prices only arrive with a full download.
       await db.insert('kv', {'key': 'version', 'value': '0'}, conflictAlgorithm: ConflictAlgorithm.replace);
     }
+    if (from < 4) await _createHistory(db);
     if (from < 3) {
       await _createBarcodes(db);
       // Extra barcodes only arrive with a full download.
       await db.insert('kv', {'key': 'version', 'value': '0'}, conflictAlgorithm: ConflictAlgorithm.replace);
     }
+  }
+
+  /// Finished work on this device (sales, received vouchers, counts), newest first.
+  static Future<void> _createHistory(Database db) async {
+    await db.execute('CREATE TABLE IF NOT EXISTS history(id TEXT PRIMARY KEY, kind TEXT NOT NULL, at TEXT NOT NULL, data TEXT NOT NULL)');
+    await db.execute('CREATE INDEX IF NOT EXISTS history_kind_at ON history(kind, at)');
   }
 
   /// More barcodes per product (another piece barcode, or the carton's own).
@@ -48,6 +55,7 @@ class LocalDb {
     );
     await db.execute('CREATE INDEX products_barcode ON products(barcode)');
     await _createBarcodes(db);
+    await _createHistory(db);
     await db.execute('''CREATE TABLE employees(id INTEGER PRIMARY KEY, name TEXT NOT NULL, role TEXT NOT NULL,
       pin_salt TEXT NOT NULL, pin_hash TEXT NOT NULL, active INTEGER NOT NULL)''');
     await db.execute('''CREATE TABLE receipts(id INTEGER PRIMARY KEY, supplier TEXT NOT NULL, status TEXT NOT NULL,
@@ -233,6 +241,35 @@ class LocalDb {
       }
       await txn.insert('kv', {'key': 'version', 'value': '${data['version']}'}, conflictAlgorithm: ConflictAlgorithm.replace);
     });
+  }
+
+  // ---------- history ----------
+
+  static const historyDays = 60;
+
+  Future<void> addHistory(String kind, String id, Map<String, Object?> data) async {
+    await db.insert('history', {
+      'id': id,
+      'kind': kind,
+      'at': DateTime.now().toIso8601String(),
+      'data': jsonEncode(data),
+    }, conflictAlgorithm: ConflictAlgorithm.replace);
+    final cutoff = DateTime.now().subtract(const Duration(days: historyDays)).toIso8601String();
+    await db.delete('history', where: 'at < ?', whereArgs: [cutoff]);
+  }
+
+  Future<List<HistoryEntry>> history(String kind, {DateTime? since, int limit = 300}) async {
+    final r = await db.query(
+      'history',
+      where: since == null ? 'kind = ?' : 'kind = ? AND at >= ?',
+      whereArgs: since == null ? [kind] : [kind, since.toIso8601String()],
+      orderBy: 'at DESC',
+      limit: limit,
+    );
+    return [
+      for (final x in r)
+        HistoryEntry(x['id'] as String, kind, DateTime.parse(x['at'] as String), jsonDecode(x['data'] as String) as Map<String, dynamic>),
+    ];
   }
 
   // ---------- outbox ----------

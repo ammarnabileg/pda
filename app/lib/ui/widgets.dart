@@ -1334,16 +1334,18 @@ class _SearchSheetState extends State<_SearchSheet> {
 }
 
 /// Short message at the top, with an optional undo button.
-void toast(BuildContext context, String msg, {VoidCallback? undo}) {
+void toast(BuildContext context, String msg, {VoidCallback? undo, String undoLabel = 'تراجع'}) {
   final m = ScaffoldMessenger.of(context);
   m.hideCurrentSnackBar();
   m.showSnackBar(
     SnackBar(
       content: Text(msg, style: const TextStyle(fontSize: 19, fontWeight: FontWeight.w700)),
-      duration: Duration(seconds: undo == null ? 2 : 6),
+      duration: Duration(seconds: undo == null ? 2 : 5),
+      // Bars with a button would otherwise stay until tapped and hide the rows under them.
+      persist: false,
       behavior: SnackBarBehavior.floating,
       backgroundColor: const Color(0xFF16302A),
-      action: undo == null ? null : SnackBarAction(label: 'تراجع', textColor: Colors.white, onPressed: undo),
+      action: undo == null ? null : SnackBarAction(label: undoLabel, textColor: Colors.white, onPressed: undo),
     ),
   );
 }

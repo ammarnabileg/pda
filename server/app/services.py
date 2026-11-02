@@ -194,6 +194,7 @@ def push_receipt(db: Session, device: Device, data: dict):
             r.lines.append(line)
             by_product[p.id] = line
         line.received, line.received_mode = qty, mode
+        line.note = (str(ln.get("note") or "").strip()[:200]) or None
     db.flush()
     for line in r.lines:
         if line.received is None:

@@ -164,12 +164,26 @@ class ReceiptDoc {
 }
 
 /// A line in the current sale.
+int _lineSeq = 0;
+
+/// A line in the current sale. The same product can be on several lines.
 class SaleLine {
+  final String id;
   final int productId;
   String mode;
   int qty; // thousandths
-  SaleLine(this.productId, this.mode, this.qty);
+  SaleLine(this.productId, this.mode, this.qty, {String? id}) : id = id ?? '${DateTime.now().microsecondsSinceEpoch}-${_lineSeq++}';
 
-  Map<String, Object?> toJson() => {'p': productId, 'm': mode, 'q': qty};
-  factory SaleLine.fromJson(Map<String, dynamic> j) => SaleLine(j['p'] as int, j['m'] as String, j['q'] as int);
+  Map<String, Object?> toJson() => {'i': id, 'p': productId, 'm': mode, 'q': qty};
+  factory SaleLine.fromJson(Map<String, dynamic> j) => SaleLine(j['p'] as int, j['m'] as String, j['q'] as int, id: j['i'] as String?);
+}
+
+/// A finished sale, received voucher or count kept on this device for its history.
+class HistoryEntry {
+  final String id;
+  final String kind; // sales | receipts | counts
+  final DateTime at;
+  final Map<String, dynamic> data;
+  const HistoryEntry(this.id, this.kind, this.at, this.data);
+  String get outboxKey => '$kind:$id';
 }

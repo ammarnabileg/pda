@@ -17,7 +17,7 @@
 {% set diff_lines = r.lines|selectattr('diff_base')|list %}
 {% if r.status == 'received' %}<div class="tabs no-print"><a href="?" class="{{ 'on' if not only }}">كل الأصناف ({{ r.lines|length }})</a><a href="?only=diff" class="{{ 'on' if only }}">الفروق بس ({{ diff_lines|length }})</a></div>{% endif %}
 <div class="table-wrap"><table><thead><tr><th>الصنف</th><th>المطلوب</th>{% if r.status == 'received' %}<th>المستلم</th><th>الفرق</th>{% endif %}</tr></thead>
-{% for l in (diff_lines if only else r.lines) %}<tr><td>{{ l.product.name }} {% if l.extra %}<span class="pill p-info">زائد غير مطلوب</span>{% endif %}</td>
+{% for l in (diff_lines if only else r.lines) %}<tr><td>{{ l.product.name }} {% if l.extra %}<span class="pill p-info">زائد غير مطلوب</span>{% endif %}{% if l.note %}<div class="neg" style="font-size:14px">ملاحظة: {{ l.note }}</div>{% endif %}</td>
 <td>{% if l.extra %}—{% else %}{{ l.ordered|qty(l.product.unit) }} {{ MODES[l.mode] }}{% endif %}</td>
 {% if r.status == 'received' %}<td>{{ l.received|qty(l.product.unit) }} {{ MODES[l.received_mode or l.mode] }}</td>
 <td>{% set d = l.diff_base %}{% if d == 0 %}<span class="zero">مطابق</span>{% elif d < 0 %}<span class="neg">ناقص {{ base_text(l.product, -d) }}</span>{% else %}<span class="pos">زيادة {{ base_text(l.product, d) }}</span>{% endif %}</td>{% endif %}</tr>

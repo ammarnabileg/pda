@@ -36,9 +36,9 @@ void main() {
       final rice = (await db.productByBarcode('6281000123456'))!;
       final sugar = (await db.productByBarcode('2100000012345'))!;
       expect(rice.stock, 48000);
-    final carton = await db.lookup('16281000123453');
-    expect(carton?.product.id, rice.id);
-    expect(carton?.mode, 'carton', reason: 'extra barcodes arrive with their unit');
+      final carton = await db.lookup('16281000123453');
+      expect(carton?.product.id, rice.id);
+      expect(carton?.mode, 'carton', reason: 'extra barcodes arrive with their unit');
 
       // Sale: 1 carton of rice + 1.250 kg sugar.
       final saleId = uuid4();

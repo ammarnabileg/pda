@@ -30,3 +30,12 @@ def init_db():
     with engine.begin() as conn:
         conn.execute(text("CREATE SEQUENCE IF NOT EXISTS sync_version"))
     Base.metadata.create_all(engine)
+    # Columns added after the first release. create_all does not alter existing tables.
+    with engine.begin() as conn:
+        for sql in UPGRADES:
+            conn.execute(text(sql))
+
+
+UPGRADES = [
+    "ALTER TABLE receipt_lines ADD COLUMN IF NOT EXISTS note VARCHAR(200)",
+]

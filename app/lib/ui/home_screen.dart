@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import 'count_screen.dart';
+import 'history_screen.dart';
 import 'price_screen.dart';
 import 'receive_screen.dart';
 import 'sale_screen.dart';
@@ -142,6 +143,18 @@ class _HomeScreenState extends State<HomeScreen> {
                       onTap: () => _open(const ReceiveListScreen()),
                     ),
                   ],
+                  const SizedBox(height: S.xs),
+                  const Text('السجل (على الجهاز ده)', style: T.label),
+                  const SizedBox(height: S.xs),
+                  Wrap(
+                    spacing: S.s,
+                    runSpacing: S.s,
+                    children: [
+                      if (e.canSell) _historyButton(Icons.receipt_long_outlined, 'الفواتير', 'sales'),
+                      if (e.canStock) _historyButton(Icons.local_shipping_outlined, 'السندات المستلمة', 'receipts'),
+                      if (e.canStock) _historyButton(Icons.fact_check_outlined, 'الجرد', 'counts'),
+                    ],
+                  ),
                 ],
               ),
             ),
@@ -150,6 +163,16 @@ class _HomeScreenState extends State<HomeScreen> {
       ),
     );
   }
+
+  Widget _historyButton(IconData icon, String label, String kind) => OutlinedButton.icon(
+    style: OutlinedButton.styleFrom(
+      minimumSize: const Size(0, S.touch),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(S.radius)),
+    ),
+    onPressed: () => _open(HistoryScreen(kind: kind)),
+    icon: Icon(icon, size: 20),
+    label: Text(label, style: T.label),
+  );
 }
 
 String roleName(String role) => const {'cashier': 'كاشير', 'storekeeper': 'أمين مخزن', 'supervisor': 'مشرف', 'admin': 'مدير'}[role] ?? role;

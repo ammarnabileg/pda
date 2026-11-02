@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../data/models.dart';
 import '../util/feedback.dart';
 import '../util/format.dart';
+import 'history_screen.dart';
 import 'scan_helpers.dart';
 import 'scope.dart';
 import 'widgets.dart';
@@ -93,9 +94,15 @@ class _ReceiveListScreenState extends State<ReceiveListScreen> {
           : ListView(
               padding: const EdgeInsets.all(S.edge),
               children: [
-                Row(
+                Text('${items!.length} سند مستني · امسح صنف لفتح السند بتاعه', style: T.sub),
+                Wrap(
+                  alignment: WrapAlignment.spaceBetween,
                   children: [
-                    Expanded(child: Text('${items!.length} سند مستني · امسح صنف لفتح السند بتاعه', style: T.sub)),
+                    TextButton.icon(
+                      onPressed: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => const HistoryScreen(kind: 'receipts'))),
+                      icon: const Icon(Icons.history, size: 20),
+                      label: const Text('السندات المستلمة', style: T.label),
+                    ),
                     TextButton.icon(
                       onPressed: () => setState(() => newestFirst = !newestFirst),
                       icon: const Icon(Icons.swap_vert, size: 20),
@@ -165,6 +172,7 @@ class _ReceiveScreenState extends State<ReceiveScreen> {
   final recv = <int, _Recv>{};
   final extra = <int>[];
   final notes = <String>[];
+  final lineNotes = <int, String>{}; // per item, e.g. "3 علب تالفة"
   String freeNote = '';
   int? lastId;
   _Filter filter = _Filter.all;
@@ -193,6 +201,7 @@ class _ReceiveScreenState extends State<ReceiveScreen> {
       extra.addAll((d['extra'] as List).cast<int>());
       notes.addAll((d['notes'] as List).cast<String>());
       freeNote = (d['free'] as String?) ?? '';
+      ((d['ln'] as Map?) ?? const {}).forEach((k, v) => lineNotes[int.parse(k as String)] = v as String);
       _noteCtl.text = freeNote;
     }
     if (doc != null) products.addAll(await db.productsByIds([...doc.lines.map((l) => l.productId), ...extra]));
@@ -212,6 +221,7 @@ class _ReceiveScreenState extends State<ReceiveScreen> {
     'extra': extra,
     'notes': notes,
     'free': freeNote,
+    'ln': {for (final e in lineNotes.entries) '${e.key}': e.value},
   });
 
   ReceiptLine? _line(int pid) {
@@ -357,12 +367,29 @@ class _ReceiveScreenState extends State<ReceiveScreen> {
       'received_at': DateTime.now().toUtc().toIso8601String(),
       'notes': allNotes.join('، '),
       'lines': [
-        for (final e in recv.entries) {'product_id': e.key, 'mode': e.value.mode, 'qty': money(e.value.qty)},
+        for (final e in recv.entries)
+          {'product_id': e.key, 'mode': e.value.mode, 'qty': money(e.value.qty), if (lineNotes[e.key] != null) 'note': lineNotes[e.key]},
       ],
     });
     for (final e in recv.entries) {
       await app.db.adjustStock(e.key, products[e.key]!.toBase(e.value.qty, e.value.mode));
     }
+    await app.db.addHistory('receipts', '${r!.id}', {
+      'supplier': r!.supplier,
+      'employee': app.employee?.name,
+      'diffs': diffs.length,
+      'notes': allNotes.join('، '),
+      'lines': [
+        for (final pid in all)
+          {
+            'name': products[pid]!.name,
+            'ordered': _line(pid) == null ? null : qtyText(_line(pid)!.ordered, _line(pid)!.mode),
+            'received': qtyText(recv[pid]!.qty, recv[pid]!.mode),
+            'status': _status(pid)!.$1,
+            'note': lineNotes[pid],
+          },
+      ],
+    });
     await app.db.markReceiptSent(r!.id);
     await app.db.set(_key, null);
     await app.recordSaved();
@@ -545,6 +572,11 @@ class _ReceiveScreenState extends State<ReceiveScreen> {
               TextSpan(text: l != null ? ' · مستلم ' : 'مستلم '),
               TextSpan(text: qtyText(x.qty, x.mode), style: T.subStrong),
             ],
+            if (lineNotes[pid] != null)
+              TextSpan(
+                text: '\nملاحظة: ${lineNotes[pid]}',
+                style: const TextStyle(color: cOrange, fontWeight: FontWeight.w700),
+              ),
           ],
         ),
       ),
@@ -561,8 +593,29 @@ class _ReceiveScreenState extends State<ReceiveScreen> {
                 label: const Text('كامل', style: T.button),
               ),
             )
-          : IconBox(Icons.edit_outlined, label: 'تعديل الكمية', onPressed: () => _qty(pid)),
+          : Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                IconBox(
+                  lineNotes[pid] == null ? Icons.note_add_outlined : Icons.sticky_note_2,
+                  label: 'ملاحظة على الصنف',
+                  fg: lineNotes[pid] == null ? cInk : cOrange,
+                  bg: lineNotes[pid] == null ? cGray2 : cOrange2,
+                  onPressed: () => _lineNote(pid),
+                ),
+                const SizedBox(width: S.xs),
+                IconBox(Icons.edit_outlined, label: 'تعديل الكمية', onPressed: () => _qty(pid)),
+              ],
+            ),
     );
+  }
+
+  /// Note for one item: quick choices plus free text.
+  Future<void> _lineNote(int pid) async {
+    final r = await showAppSheet<String>(context, _NoteSheet(name: products[pid]!.name, initial: lineNotes[pid] ?? ''));
+    if (r == null || !mounted) return;
+    setState(() => r.isEmpty ? lineNotes.remove(pid) : lineNotes[pid] = r);
+    _save();
   }
 }
 
@@ -591,5 +644,58 @@ class _ReceiveDone extends StatelessWidget {
         BigButton.light('رجوع للسندات', onPressed: () => Navigator.of(context).pop()),
       ],
     ),
+  );
+}
+
+/// Owns its text controller, so it is disposed only after the sheet has closed.
+class _NoteSheet extends StatefulWidget {
+  final String name, initial;
+  const _NoteSheet({required this.name, required this.initial});
+  @override
+  State<_NoteSheet> createState() => _NoteSheetState();
+}
+
+class _NoteSheetState extends State<_NoteSheet> {
+  late final ctl = TextEditingController(text: widget.initial);
+
+  @override
+  void dispose() {
+    ctl.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) => Column(
+    mainAxisSize: MainAxisSize.min,
+    crossAxisAlignment: CrossAxisAlignment.stretch,
+    children: [
+      Text('ملاحظة على: ${widget.name}', style: T.heading),
+      const SizedBox(height: S.s),
+      Wrap(
+        spacing: S.xs,
+        runSpacing: S.xs,
+        children: [
+          for (final n in noteChips)
+            ActionChip(label: Text(n), onPressed: () => ctl.text = ctl.text.trim().isEmpty ? n : '${ctl.text.trim()}، $n'),
+        ],
+      ),
+      const SizedBox(height: S.s),
+      TextField(
+        controller: ctl,
+        autofocus: true,
+        maxLength: 200,
+        decoration: InputDecoration(
+          hintText: 'مثال: 3 علب تالفة',
+          border: OutlineInputBorder(borderRadius: BorderRadius.circular(S.radius)),
+        ),
+      ),
+      Row(
+        children: [
+          Expanded(child: BigButton.light('مسح الملاحظة', onPressed: () => Navigator.pop(context, ''))),
+          const SizedBox(width: S.s),
+          Expanded(child: BigButton('حفظ', onPressed: () => Navigator.pop(context, ctl.text.trim()))),
+        ],
+      ),
+    ],
   );
 }

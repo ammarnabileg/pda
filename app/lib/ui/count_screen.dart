@@ -7,11 +7,16 @@ import 'scan_helpers.dart';
 import 'scope.dart';
 import 'widgets.dart';
 
+int _seq = 0;
+
+/// One counted entry. The same product can have several (e.g. two shelves);
+/// they are added together per product when the count is sent.
 class _CountLine {
+  final String id;
   final int productId;
   int base; // thousandths of the base unit
   int scans; // how many times it was counted (added to)
-  _CountLine(this.productId, this.base, [this.scans = 1]);
+  _CountLine(this.productId, this.base, [this.scans = 1, String? id]) : id = id ?? '${DateTime.now().microsecondsSinceEpoch}-${_seq++}';
 }
 
 enum _Sort { recent, name }
@@ -29,7 +34,7 @@ class _CountScreenState extends State<CountScreen> {
   final products = <int, Product>{};
   String? id, startedAt;
   bool loaded = false;
-  int? lastId;
+  String? lastId;
   String? lastNote;
   String filter = '';
   _Sort sort = _Sort.recent;
@@ -47,7 +52,7 @@ class _CountScreenState extends State<CountScreen> {
       id = d['id'] as String?;
       startedAt = d['started_at'] as String?;
       for (final j in d['lines'] as List) {
-        lines.add(_CountLine(j['p'] as int, j['b'] as int, (j['n'] as int?) ?? 1));
+        lines.add(_CountLine(j['p'] as int, j['b'] as int, (j['n'] as int?) ?? 1, j['i'] as String?));
       }
     }
     products.addAll(await db.productsByIds(lines.map((l) => l.productId)));
@@ -66,7 +71,7 @@ class _CountScreenState extends State<CountScreen> {
               'id': id,
               'started_at': startedAt,
               'lines': [
-                for (final l in lines) {'p': l.productId, 'b': l.base, 'n': l.scans},
+                for (final l in lines) {'i': l.id, 'p': l.productId, 'b': l.base, 'n': l.scans},
               ],
             },
     );
@@ -76,7 +81,31 @@ class _CountScreenState extends State<CountScreen> {
     if (h == null || !mounted) return;
     final p = h.product;
     products[p.id] = p;
-    final i = lines.indexWhere((l) => l.productId == p.id);
+    var i = lines.lastIndexWhere((l) => l.productId == p.id);
+    if (i >= 0) {
+      // Already counted: add to that entry, or keep a separate one (another shelf).
+      final total = lines.where((l) => l.productId == p.id).fold<int>(0, (a, l) => a + l.base);
+      final choice = await showAppSheet<String>(
+        context,
+        Builder(
+          builder: (ctx) => Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Text(p.name, style: T.heading),
+              const SizedBox(height: S.xs),
+              Text('معدود قبل كده: ${p.baseText(total)}', style: T.label),
+              const SizedBox(height: S.m),
+              BigButton('زوّد على نفس البند', icon: Icons.add, onPressed: () => Navigator.pop(ctx, 'merge')),
+              const SizedBox(height: S.s),
+              BigButton.light('بند جديد (رف أو مكان تاني)', icon: Icons.playlist_add, onPressed: () => Navigator.pop(ctx, 'new')),
+            ],
+          ),
+        ),
+      );
+      if (choice == null || !mounted) return;
+      if (choice == 'new') i = -1;
+    }
     final prev = i >= 0 ? lines[i].base : 0;
     final r = await numberPad(
       context,
@@ -102,11 +131,19 @@ class _CountScreenState extends State<CountScreen> {
     }
     setState(() {
       lines.add(line);
-      lastId = p.id;
+      lastId = line.id;
       lastNote = i >= 0 ? '+${p.baseText(add)}' : null;
       filter = '';
     });
     _save();
+  }
+
+  Map<int, int> _perProduct() {
+    final m = <int, int>{};
+    for (final l in lines) {
+      m[l.productId] = (m[l.productId] ?? 0) + l.base;
+    }
+    return m;
   }
 
   Future<void> _onScan(String code) async => _onProduct(await findScanned(context, AppScope.read(context), code));
@@ -171,7 +208,7 @@ class _CountScreenState extends State<CountScreen> {
     final ok = await confirmSheet(
       context,
       title: 'إنهاء الجرد؟',
-      body: Text('تم عدّ ${lines.length} صنف.\nبعد الإنهاء الجرد بيتقفل، ومش هتقدر تعدّل فيه من الجهاز.'),
+      body: Text('تم عدّ ${_perProduct().length} صنف.\nبعد الإنهاء الجرد بيتقفل، ومش هتقدر تعدّل فيه من الجهاز.'),
       yes: 'نعم، إنهاء',
     );
     if (!ok || !mounted) return;
@@ -184,10 +221,17 @@ class _CountScreenState extends State<CountScreen> {
       'started_at': startedAt,
       'finished_at': DateTime.now().toUtc().toIso8601String(),
       'lines': [
-        for (final l in lines) {'product_id': l.productId, 'counted': money(l.base)},
+        // One line per product: entries from several shelves are added together.
+        for (final e in _perProduct().entries) {'product_id': e.key, 'counted': money(e.value)},
       ],
     });
-    final n = lines.length;
+    final n = _perProduct().length;
+    await app.db.addHistory('counts', countId, {
+      'employee': app.employee?.name,
+      'lines': [
+        for (final e in _perProduct().entries) {'name': products[e.key]!.name, 'counted': products[e.key]!.baseText(e.value)},
+      ],
+    });
     lines.clear();
     id = null;
     startedAt = null;
@@ -222,7 +266,7 @@ class _CountScreenState extends State<CountScreen> {
                   ScanBar(text: 'امسح الصنف التالي', onType: type, onSearch: search),
                   Row(
                     children: [
-                      Text('${lines.length} صنف معدود', style: T.subStrong),
+                      Text('${_perProduct().length} صنف معدود', style: T.subStrong),
                       const Spacer(),
                       TextButton.icon(
                         onPressed: () => setState(() => sort = sort == _Sort.recent ? _Sort.name : _Sort.recent),
@@ -256,16 +300,16 @@ class _CountScreenState extends State<CountScreen> {
               ],
             ),
       footer: Footer(
-        children: [BigButton('إنهاء الجرد (${lines.length} صنف)', icon: Icons.check, onPressed: lines.isEmpty ? null : _finish)],
+        children: [BigButton('إنهاء الجرد (${_perProduct().length} صنف)', icon: Icons.check, onPressed: lines.isEmpty ? null : _finish)],
       ),
     );
   }
 
   Widget _row(_CountLine l) {
     final p = products[l.productId]!;
-    final isLast = l.productId == lastId;
+    final isLast = l.id == lastId;
     return ItemRow(
-      key: ValueKey(l.productId),
+      key: ValueKey(l.id),
       title: p.name,
       highlight: isLast,
       onTap: () => _actions(l),

@@ -81,7 +81,7 @@ def test_bad_record_does_not_block_others(device_client, seed, db):
 def test_receipt_push(device_client, seed, db):
     rid = seed["receipt"].id
     payload = {"receipts": [{"receipt_id": rid, "employee_id": seed["admin"].id, "notes": "كرتون تالف",
-                             "lines": [{"product_id": seed["rice"].id, "mode": "carton", "qty": 9},
+                             "lines": [{"product_id": seed["rice"].id, "mode": "carton", "qty": 9, "note": "كرتون مفتوح"},
                                        {"product_id": seed["sugar"].id, "mode": "kg", "qty": "5"}]}]}
     r = device_client.post("/api/v1/sync/push", json=payload).json()
     assert r["accepted"]["receipts"] == [rid]
@@ -90,6 +90,7 @@ def test_receipt_push(device_client, seed, db):
     assert rec.status == "received" and rec.device_notes == "كرتون تالف"
     rice_line = next(l for l in rec.lines if l.product_id == seed["rice"].id)
     assert rice_line.diff_base == Decimal("-6")
+    assert rice_line.note == "كرتون مفتوح"
     assert any(l.extra for l in rec.lines)
     assert db.get(Product, seed["rice"].id).stock == Decimal("102")  # 48 + 54
     assert db.get(Product, seed["sugar"].id).stock == Decimal("130")
@@ -153,3 +154,15 @@ def test_concurrent_sales_do_not_lose_stock(seed):
     s = SessionLocal()
     assert s.get(Product, seed["rice"].id).stock == Decimal("8")  # 48 - 40
     s.close()
+
+
+def test_same_product_on_two_sale_lines(device_client, seed, db):
+    sid = str(uuid.uuid4())
+    r = device_client.post("/api/v1/sync/push", json={"sales": [{"id": sid, "lines": [
+        {"product_id": seed["rice"].id, "mode": "piece", "qty": 1, "unit_price": "2.450"},
+        {"product_id": seed["rice"].id, "mode": "piece", "qty": 1, "unit_price": "2.450"},
+        {"product_id": seed["rice"].id, "mode": "carton", "qty": 1, "unit_price": "14.700"}]}]}).json()
+    assert r["accepted"]["sales"] == [sid]
+    db.expire_all()
+    assert len(db.get(Sale, sid).lines) == 3
+    assert db.get(Product, seed["rice"].id).stock == Decimal("40")  # 48 - 1 - 1 - 6

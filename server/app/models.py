@@ -147,6 +147,7 @@ class ReceiptLine(Base):
     received: Mapped[Decimal | None] = mapped_column(Qty)
     received_mode: Mapped[str | None] = mapped_column(String(10))
     extra: Mapped[bool] = mapped_column(Boolean, default=False)
+    note: Mapped[str | None] = mapped_column(String(200))  # written on the device, e.g. "3 علب تالفة"
     receipt: Mapped[Receipt] = relationship(back_populates="lines")
     product: Mapped[Product] = relationship()
 

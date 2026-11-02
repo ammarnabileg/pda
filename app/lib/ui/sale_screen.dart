@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../data/models.dart';
 import '../util/format.dart';
 import '../util/ids.dart';
+import 'history_screen.dart';
 import 'scan_helpers.dart';
 import 'scope.dart';
 import 'widgets.dart';
@@ -44,7 +45,7 @@ class _SaleScreenState extends State<SaleScreen> {
 
   int _lineTotal(SaleLine l) => lineTotal(products[l.productId]!.unitPrice(l.mode), l.qty);
   int get total => lines.fold(0, (a, l) => a + _lineTotal(l));
-  String _key(SaleLine l) => '${l.productId}${l.mode}';
+  String _key(SaleLine l) => l.id;
 
   /// Units for the summary: pieces (cartons counted as their pieces) and kilograms.
   String get unitsSummary {
@@ -60,19 +61,78 @@ class _SaleScreenState extends State<SaleScreen> {
     return [if (pieces > 0) '$pieces حبة', if (grams > 0) '${money(grams)} كجم'].join(' + ');
   }
 
-  void _add(Product p, String mode, int qty) {
+  /// Adds to the sale. Same product in the same unit: added to that line straight away
+  /// (fast for repeated scans), with a "separate line" option. Same product in another
+  /// unit: asks whether to add it to the existing line or keep it as a new line.
+  Future<void> _add(Product p, String mode, int qty) async {
     products[p.id] = p;
-    final i = lines.indexWhere((l) => l.productId == p.id && l.mode == mode);
-    SaleLine line;
-    if (i >= 0) {
-      line = lines.removeAt(i)..qty += qty;
-    } else {
-      line = SaleLine(p.id, mode, qty);
+    SaleLine? same;
+    SaleLine? other;
+    for (final l in lines.reversed) {
+      if (l.productId != p.id) continue;
+      if (l.mode == mode) {
+        same ??= l;
+      } else {
+        other ??= l;
+      }
     }
+    if (same != null) {
+      final line = same;
+      _bring(line..qty += qty, '+${qtyText(qty, mode)}');
+      toast(
+        context,
+        'اتزوّد على البند: ${qtyText(line.qty, mode)}',
+        undoLabel: 'بند منفصل',
+        undo: () {
+          if (!mounted || !lines.contains(line)) return;
+          line.qty -= qty;
+          if (line.qty <= 0) lines.remove(line);
+          _bring(SaleLine(p.id, mode, qty), '+${qtyText(qty, mode)}');
+        },
+      );
+      return;
+    }
+    if (other != null) {
+      final existing = other;
+      final choice = await showAppSheet<String>(
+        context,
+        Builder(
+          builder: (ctx) => Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Text(p.name, style: T.heading),
+              const SizedBox(height: S.xs),
+              Text('موجود في الفاتورة: ${qtyText(existing.qty, existing.mode)}\nالمسح ده: ${qtyText(qty, mode)}', style: T.label),
+              const SizedBox(height: S.m),
+              BigButton('زوّد على البند القديم', icon: Icons.add, onPressed: () => Navigator.pop(ctx, 'merge')),
+              const SizedBox(height: S.s),
+              BigButton.light('اعمله بند جديد', icon: Icons.playlist_add, onPressed: () => Navigator.pop(ctx, 'new')),
+            ],
+          ),
+        ),
+      );
+      if (!mounted || choice == null) return;
+      if (choice == 'merge') {
+        // Different units go together as pieces: 1 carton + 2 pieces = 8 pieces.
+        final pieces = p.toBase(existing.qty, existing.mode) + p.toBase(qty, mode);
+        existing
+          ..mode = 'piece'
+          ..qty = pieces;
+        _bring(existing, '+${qtyText(qty, mode)}');
+        return;
+      }
+    }
+    _bring(SaleLine(p.id, mode, qty), '+${qtyText(qty, mode)}');
+  }
+
+  /// Puts [line] at the top of the list and highlights it.
+  void _bring(SaleLine line, String note) {
     setState(() {
+      lines.remove(line);
       lines.add(line);
       lastKey = _key(line);
-      lastAdded = '+${qtyText(qty, mode)}';
+      lastAdded = note;
       filter = '';
     });
     _save();
@@ -92,10 +152,10 @@ class _SaleScreenState extends State<SaleScreen> {
         ok: 'إضافة',
       );
       if (r?.scanned != null) return _onScan(r!.scanned!);
-      if (r != null) _add(p, 'kg', r.qty);
+      if (r != null) await _add(p, 'kg', r.qty);
     } else {
       // A carton barcode adds one carton; the piece barcode one piece.
-      _add(p, h.mode == 'carton' && p.carton > 0 ? 'carton' : 'piece', 1000);
+      await _add(p, h.mode == 'carton' && p.carton > 0 ? 'carton' : 'piece', 1000);
     }
   }
 
@@ -119,15 +179,9 @@ class _SaleScreenState extends State<SaleScreen> {
     if (r?.scanned != null) return _onScan(r!.scanned!);
     if (r == null) return;
     setState(() {
-      final other = lines.indexWhere((x) => !identical(x, l) && x.productId == l.productId && x.mode == r.mode);
-      if (other >= 0) {
-        lines[other].qty += r.qty;
-        lines.remove(l);
-      } else {
-        l
-          ..qty = r.qty
-          ..mode = r.mode;
-      }
+      l
+        ..qty = r.qty
+        ..mode = r.mode;
     });
     _save();
   }
@@ -241,6 +295,20 @@ class _SaleScreenState extends State<SaleScreen> {
     for (final l in lines) {
       await app.db.adjustStock(l.productId, -products[l.productId]!.toBase(l.qty, l.mode));
     }
+    await app.db.addHistory('sales', id, {
+      'total': t,
+      'employee': app.employee?.name,
+      'lines': [
+        for (final l in lines)
+          {
+            'name': products[l.productId]!.name,
+            'mode': l.mode,
+            'qty': l.qty,
+            'price': products[l.productId]!.unitPrice(l.mode),
+            'total': _lineTotal(l),
+          },
+      ],
+    });
     lines.clear();
     await _save();
     await app.recordSaved();
@@ -398,7 +466,20 @@ class SaleDoneScreen extends StatelessWidget {
           onPressed: () => Navigator.of(context).pushReplacement(MaterialPageRoute(builder: (_) => const SaleScreen())),
         ),
         const SizedBox(height: S.s),
-        BigButton.light('الرئيسية', onPressed: () => Navigator.of(context).pop()),
+        Row(
+          children: [
+            Expanded(child: BigButton.light('الرئيسية', onPressed: () => Navigator.of(context).pop())),
+            const SizedBox(width: S.s),
+            Expanded(
+              child: BigButton.light(
+                'سجل الفواتير',
+                icon: Icons.receipt_long_outlined,
+                onPressed: () =>
+                    Navigator.of(context).pushReplacement(MaterialPageRoute(builder: (_) => const HistoryScreen(kind: 'sales'))),
+              ),
+            ),
+          ],
+        ),
       ],
     ),
   );
