@@ -124,6 +124,8 @@ class Receipt(Base):
     supplier_id: Mapped[int] = mapped_column(ForeignKey("suppliers.id"))
     status: Mapped[str] = mapped_column(String(12), default="open")  # open, received, cancelled
     note: Mapped[str | None] = mapped_column(Text)
+    # Set when the voucher was made on a device for a delivery that had none (idempotent upload).
+    client_id: Mapped[str | None] = mapped_column(String(40), unique=True)
     device_notes: Mapped[str | None] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
     received_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))

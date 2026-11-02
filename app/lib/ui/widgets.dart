@@ -38,7 +38,25 @@ const _scannerKeyGap = Duration(milliseconds: 60);
 const _idleEnd = Duration(milliseconds: 120);
 const _minLength = 4;
 
+/// What the scanner box on screen shows: ready or not, digits arriving, last code read.
+class ScanInfo {
+  final bool ready;
+  final String typing;
+  final String? last;
+  const ScanInfo({this.ready = true, this.typing = '', this.last});
+}
+
+/// Gives [ScanBar] / [ScanPrompt] the live scanner state of their screen.
+class ScanScope extends InheritedWidget {
+  final ValueNotifier<ScanInfo> info;
+  const ScanScope({super.key, required this.info, required super.child});
+  static ValueNotifier<ScanInfo>? of(BuildContext context) => context.getInheritedWidgetOfExactType<ScanScope>()?.info;
+  @override
+  bool updateShouldNotify(ScanScope old) => old.info != info;
+}
+
 class _ScanListenerState extends State<ScanListener> {
+  final info = ValueNotifier(const ScanInfo());
   final _buf = StringBuffer();
   DateTime _last = DateTime.fromMillisecondsSinceEpoch(0);
   bool _allFast = true;
@@ -61,7 +79,13 @@ class _ScanListenerState extends State<ScanListener> {
     _idle?.cancel();
     _field.dispose();
     _focus.dispose();
+    info.dispose();
     super.dispose();
+  }
+
+  void _show({String? last}) {
+    final ready = !_otherTextBoxFocused();
+    info.value = ScanInfo(ready: ready, typing: _buf.toString(), last: last ?? info.value.last);
   }
 
   bool get _active {
@@ -72,6 +96,7 @@ class _ScanListenerState extends State<ScanListener> {
 
   /// Gives the invisible field the focus whenever nothing else needs it.
   void _keepFocus() {
+    if (mounted) _show();
     if (!_active || _focus.hasFocus) return;
     final f = FocusManager.instance.primaryFocus;
     if (f != null && f.context?.widget is EditableText) return; // a real text box is in use
@@ -88,6 +113,7 @@ class _ScanListenerState extends State<ScanListener> {
     final code = _buf.toString().trim();
     _buf.clear();
     _allFast = true;
+    _show(last: code.length >= _minLength ? code : null);
     if (code.length >= _minLength) widget.onScan(code);
   }
 
@@ -102,6 +128,7 @@ class _ScanListenerState extends State<ScanListener> {
     }
     _last = now;
     _buf.write(ch);
+    _show();
     // No Enter from the scanner: end the code when a fast burst stops.
     _idle?.cancel();
     _idle = Timer(_idleEnd, () {
@@ -142,7 +169,7 @@ class _ScanListenerState extends State<ScanListener> {
   @override
   Widget build(BuildContext context) => Stack(
     children: [
-      widget.child,
+      ScanScope(info: info, child: widget.child),
       Positioned(
         left: 0,
         top: 0,
@@ -588,6 +615,62 @@ class Footer extends StatelessWidget {
   );
 }
 
+/// The scanner box: always on screen in sale, count, receiving and price, so staff
+/// see that the device is listening, the digits as they arrive and the last code read.
+class ScanBox extends StatelessWidget {
+  final String text;
+  final bool big;
+  const ScanBox({super.key, required this.text, this.big = false});
+
+  @override
+  Widget build(BuildContext context) {
+    final n = ScanScope.of(context);
+    if (n == null) return Text(text, style: T.subStrong);
+    return ValueListenableBuilder<ScanInfo>(
+      valueListenable: n,
+      builder: (_, i, _) {
+        final reading = i.typing.isNotEmpty;
+        final (Color fg, Color bg, IconData icon, String title) = !i.ready
+            ? (cOrange, cOrange2, Icons.keyboard_hide_outlined, 'المسح واقف — اقفل خانة الكتابة')
+            : reading
+            ? (cBlue, cBlue2, Icons.qr_code_scanner, 'بيقرا…')
+            : (cGreen, cGreen2, Icons.qr_code_scanner, 'جاهز — $text');
+        return Semantics(
+          liveRegion: true,
+          label: 'القارئ: $title',
+          child: Container(
+            padding: EdgeInsets.symmetric(horizontal: S.m, vertical: big ? S.m : S.s),
+            decoration: BoxDecoration(
+              color: bg,
+              borderRadius: BorderRadius.circular(S.radius),
+              border: Border.all(color: fg, width: 2),
+            ),
+            child: Row(
+              children: [
+                Icon(icon, size: big ? 34 : 26, color: fg),
+                const SizedBox(width: S.s),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text(title, style: (big ? T.heading : T.label).copyWith(color: fg)),
+                      if (reading)
+                        Text(i.typing, textDirection: TextDirection.ltr, style: T.subStrong.copyWith(letterSpacing: 1))
+                      else if (i.last != null)
+                        Text('آخر باركود: ${i.last}', style: T.sub, overflow: TextOverflow.ellipsis),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+}
+
 /// Shown when a list is empty: what to do next.
 class ScanPrompt extends StatelessWidget {
   final String title, sub;
@@ -597,34 +680,17 @@ class ScanPrompt extends StatelessWidget {
   @override
   Widget build(BuildContext context) => Column(
     children: [
-      Container(
-        width: double.infinity,
-        padding: const EdgeInsets.symmetric(vertical: S.l, horizontal: S.m),
-        decoration: BoxDecoration(
-          color: cSurface,
-          borderRadius: BorderRadius.circular(S.radius),
-          border: Border.all(color: const Color(0xFFA9BAB1), width: 1.5),
-        ),
-        child: Column(
-          children: [
-            const Icon(Icons.qr_code_scanner, size: 52, color: cHead),
-            const SizedBox(height: S.xs),
-            Text(
-              title,
-              textAlign: TextAlign.center,
-              style: const TextStyle(fontSize: 20, fontWeight: FontWeight.w800, color: cHead),
-            ),
-            Text(sub, textAlign: TextAlign.center, style: T.sub),
-          ],
-        ),
+      ScanBox(text: title, big: true),
+      Padding(
+        padding: const EdgeInsets.symmetric(vertical: S.s),
+        child: Text(sub, textAlign: TextAlign.center, style: T.sub),
       ),
-      const SizedBox(height: S.s),
       _AltButtons(onType: onType, onSearch: onSearch),
     ],
   );
 }
 
-/// One-line reminder above a list that scanning keeps working, plus typed/name fallbacks.
+/// Scanner box above a list, plus typed/name fallbacks.
 class ScanBar extends StatelessWidget {
   final String text;
   final VoidCallback onType, onSearch;
@@ -635,9 +701,8 @@ class ScanBar extends StatelessWidget {
     padding: const EdgeInsets.only(bottom: S.s),
     child: Row(
       children: [
-        const Icon(Icons.qr_code_scanner, size: 22, color: cHead),
-        const SizedBox(width: 6),
-        Expanded(child: Text(text, style: T.subStrong)),
+        Expanded(child: ScanBox(text: text)),
+        const SizedBox(width: S.xs),
         _small(Icons.dialpad, 'رقم', onType),
         const SizedBox(width: S.xs),
         _small(Icons.search, 'اسم', onSearch),
@@ -654,17 +719,15 @@ class ScanBar extends StatelessWidget {
     child: InkWell(
       borderRadius: BorderRadius.circular(10),
       onTap: f,
-      child: SizedBox(
-        height: 44,
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 10),
-          child: Row(
-            children: [
-              Icon(i, size: 20),
-              const SizedBox(width: 4),
-              Text(t, style: T.label),
-            ],
-          ),
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(minWidth: S.touch, minHeight: 56),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(i, size: 20),
+            Text(t, style: T.pill),
+          ],
         ),
       ),
     ),

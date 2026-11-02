@@ -186,7 +186,7 @@ class AppState extends ChangeNotifier {
     while (true) {
       final rows = await db.pendingOutbox(limit: 50);
       if (rows.isEmpty) return;
-      final payload = <String, List<Object?>>{'sales': [], 'counts': [], 'receipts': []};
+      final payload = <String, List<Object?>>{'sales': [], 'counts': [], 'receipts': [], 'new_receipts': []};
       final keyOf = <String, String>{};
       for (final r in rows) {
         final kind = r['kind'] as String;

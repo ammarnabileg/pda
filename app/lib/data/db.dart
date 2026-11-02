@@ -17,7 +17,7 @@ class LocalDb {
     final file = path ?? p.join(await f.getDatabasesPath(), 'tamween.db');
     final db = await f.openDatabase(
       file,
-      options: OpenDatabaseOptions(version: 4, onCreate: _create, onUpgrade: _upgrade),
+      options: OpenDatabaseOptions(version: 5, onCreate: _create, onUpgrade: _upgrade),
     );
     return LocalDb(db);
   }
@@ -29,12 +29,16 @@ class LocalDb {
       await db.insert('kv', {'key': 'version', 'value': '0'}, conflictAlgorithm: ConflictAlgorithm.replace);
     }
     if (from < 4) await _createHistory(db);
+    if (from < 5) await _createSuppliers(db);
     if (from < 3) {
       await _createBarcodes(db);
       // Extra barcodes only arrive with a full download.
       await db.insert('kv', {'key': 'version', 'value': '0'}, conflictAlgorithm: ConflictAlgorithm.replace);
     }
   }
+
+  static Future<void> _createSuppliers(Database db) =>
+      db.execute('CREATE TABLE IF NOT EXISTS suppliers(id INTEGER PRIMARY KEY, name TEXT NOT NULL)');
 
   /// Finished work on this device (sales, received vouchers, counts), newest first.
   static Future<void> _createHistory(Database db) async {
@@ -56,6 +60,7 @@ class LocalDb {
     await db.execute('CREATE INDEX products_barcode ON products(barcode)');
     await _createBarcodes(db);
     await _createHistory(db);
+    await _createSuppliers(db);
     await db.execute('''CREATE TABLE employees(id INTEGER PRIMARY KEY, name TEXT NOT NULL, role TEXT NOT NULL,
       pin_salt TEXT NOT NULL, pin_hash TEXT NOT NULL, active INTEGER NOT NULL)''');
     await db.execute('''CREATE TABLE receipts(id INTEGER PRIMARY KEY, supplier TEXT NOT NULL, status TEXT NOT NULL,
@@ -224,6 +229,12 @@ class LocalDb {
       for (final j in (data['employees'] as List)) {
         batch.insert('employees', Employee.fromApi(j).toRow(), conflictAlgorithm: ConflictAlgorithm.replace);
       }
+      if (data['suppliers'] is List) {
+        batch.delete('suppliers');
+        for (final x in data['suppliers'] as List) {
+          batch.insert('suppliers', {'id': x['id'], 'name': x['name']});
+        }
+      }
       await batch.commit(noResult: true);
       for (final j in (data['receipts'] as List)) {
         final existing = await txn.query('receipts', columns: ['status'], where: 'id = ?', whereArgs: [j['id']]);
@@ -243,6 +254,11 @@ class LocalDb {
     });
   }
 
+  Future<List<(int, String)>> suppliers() async {
+    final r = await db.query('suppliers', orderBy: 'name');
+    return [for (final x in r) (x['id'] as int, x['name'] as String)];
+  }
+
   // ---------- history ----------
 
   static const historyDays = 60;
@@ -258,17 +274,24 @@ class LocalDb {
     await db.delete('history', where: 'at < ?', whereArgs: [cutoff]);
   }
 
+  /// [kind] "receipts" also lists vouchers made on the device ("new_receipts").
   Future<List<HistoryEntry>> history(String kind, {DateTime? since, int limit = 300}) async {
+    final kinds = kind == 'receipts' ? ['receipts', 'new_receipts'] : [kind];
     final r = await db.query(
       'history',
-      where: since == null ? 'kind = ?' : 'kind = ? AND at >= ?',
-      whereArgs: since == null ? [kind] : [kind, since.toIso8601String()],
+      where: 'kind IN (${List.filled(kinds.length, '?').join(',')})${since == null ? '' : ' AND at >= ?'}',
+      whereArgs: [...kinds, if (since != null) since.toIso8601String()],
       orderBy: 'at DESC',
       limit: limit,
     );
     return [
       for (final x in r)
-        HistoryEntry(x['id'] as String, kind, DateTime.parse(x['at'] as String), jsonDecode(x['data'] as String) as Map<String, dynamic>),
+        HistoryEntry(
+          x['id'] as String,
+          x['kind'] as String,
+          DateTime.parse(x['at'] as String),
+          jsonDecode(x['data'] as String) as Map<String, dynamic>,
+        ),
     ];
   }
 

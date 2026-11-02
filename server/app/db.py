@@ -38,4 +38,6 @@ def init_db():
 
 UPGRADES = [
     "ALTER TABLE receipt_lines ADD COLUMN IF NOT EXISTS note VARCHAR(200)",
+    "ALTER TABLE receipts ADD COLUMN IF NOT EXISTS client_id VARCHAR(40)",
+    "CREATE UNIQUE INDEX IF NOT EXISTS receipts_client_id ON receipts (client_id)",
 ]

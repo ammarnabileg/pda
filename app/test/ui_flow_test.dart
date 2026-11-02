@@ -73,6 +73,9 @@ Future<LocalDb> seededDb() async {
       {'id': 1, 'name': 'أحمد', 'role': 'cashier', 'pin_salt': salt, 'pin_hash': hashPin('2222', salt), 'active': true},
       {'id': 2, 'name': 'محمود', 'role': 'storekeeper', 'pin_salt': salt, 'pin_hash': hashPin('3333', salt), 'active': true},
     ],
+    'suppliers': [
+      {'id': 4, 'name': 'شركة المواد الغذائية'},
+    ],
     'receipts': [
       {
         'id': 7,
@@ -525,6 +528,56 @@ void main() {
     expect(out.single['payload'].toString(), contains('"note":"كرتون تالف"'));
     final hist = (await tester.runAsync(() => app.db.history('receipts')))!;
     expect(hist.single.data['lines'][0]['note'], 'كرتون تالف');
+    await tester.pump(const Duration(seconds: 30));
+  });
+
+  testWidgets('the scan box says the device is listening and shows the last code', (tester) async {
+    await startApp(tester);
+    await login(tester, 'أحمد', '2222');
+    await tester.tap(find.text('بيع'));
+    await settle(tester);
+    expect(find.textContaining('جاهز —'), findsOneWidget);
+    await scan(tester, '6281000123456');
+    await settle(tester);
+    expect(find.text('آخر باركود: 6281000123456'), findsOneWidget);
+    await tester.pump(const Duration(seconds: 30));
+  });
+
+  testWidgets('receiving without a voucher: new supplier, scan, note, confirm', (tester) async {
+    final app = await startApp(tester);
+    await login(tester, 'محمود', '3333');
+    await tester.tap(find.text('استلام'));
+    await settle(tester);
+    await tester.tap(find.text('استلام من غير سند'));
+    await settle(tester);
+    await waitFor(tester, find.text('شركة المواد الغذائية'));
+    await tester.pumpAndSettle(); // let the sheet finish sliding up
+    // The supplier list opens first.
+    expect(find.text('شركة المواد الغذائية'), findsOneWidget);
+    await tester.enterText(find.byType(TextField).last, 'مورد جديد');
+    await tester.pump();
+    await tester.tap(find.text('مورد جديد: مورد جديد'));
+    await settle(tester);
+    expect(find.text('مورد جديد — هيتضاف للوحة التحكم'), findsOneWidget);
+    // A carton barcode starts the pad on cartons.
+    await scan(tester, '16281000123453');
+    await settle(tester);
+    await tester.tap(find.text('3').last);
+    await tester.tap(find.text('إضافة'));
+    await settle(tester);
+    expect(find.textContaining('مستلم 3 كرتون', findRichText: true), findsOneWidget);
+    await tester.tap(find.textContaining('تأكيد الاستلام'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('نعم، تأكيد'));
+    await settle(tester, 800);
+    expect(find.text('تم تسجيل الاستلام'), findsOneWidget);
+    final out = (await tester.runAsync(() => app.db.pendingOutbox()))!;
+    expect(out.single['kind'], 'new_receipts');
+    expect(out.single['payload'].toString(), contains('"supplier_name":"مورد جديد"'));
+    expect(out.single['payload'].toString(), contains('"mode":"carton","qty":"3.000"'));
+    final hist = (await tester.runAsync(() => app.db.history('receipts')))!;
+    expect(hist.single.kind, 'new_receipts');
+    expect(await tester.runAsync(() => app.db.getJson('draft_new_receipt')), isNull);
     await tester.pump(const Duration(seconds: 30));
   });
 }

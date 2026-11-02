@@ -7,7 +7,7 @@ from sqlalchemy.orm import Session
 
 from .db import next_version
 from .models import (
-    CountLine, CountSession, Device, Employee, Product, ProductBarcode, Receipt, ReceiptLine, Sale, SaleLine,
+    CountLine, CountSession, Device, Employee, Product, ProductBarcode, Receipt, ReceiptLine, Sale, SaleLine, Supplier,
     StockMove, now,
 )
 
@@ -97,6 +97,9 @@ def pull(db: Session, since: int):
         "products": [product_dict(p) for p in products],
         "employees": [employee_dict(e) for e in employees],
         "receipts": [receipt_dict(r) for r in receipts],
+        # Small list, sent whole every time, for vouchers made on the device.
+        "suppliers": [{"id": x.id, "name": x.name} for x in db.scalars(
+            select(Supplier).where(Supplier.active.is_(True)).order_by(Supplier.name))],
     }
 
 
@@ -208,8 +211,46 @@ def push_receipt(db: Session, device: Device, data: dict):
     bump(db, r)
 
 
-PUSHERS = {"sales": push_sale, "counts": push_count, "receipts": push_receipt}
-ID_FIELD = {"sales": "id", "counts": "id", "receipts": "receipt_id"}
+def push_new_receipt(db: Session, device: Device, data: dict):
+    """A delivery that arrived without a voucher: made and received on the device."""
+    cid = str(data["id"])
+    if db.scalar(select(Receipt.id).where(Receipt.client_id == cid)):
+        return  # retry of an upload that already worked
+    lines = data.get("lines") or []
+    if not lines:
+        raise SyncError("empty_receipt")
+    sup = db.get(Supplier, data.get("supplier_id") or 0)
+    if sup is None:
+        name = str(data.get("supplier_name") or "").strip()[:200]
+        if not name:
+            raise SyncError("no_supplier")
+        sup = db.scalar(select(Supplier).where(Supplier.name == name))
+        if sup is None:
+            sup = Supplier(name=name)
+            db.add(sup)
+            db.flush()
+    emp = _employee_id(db, data.get("employee_id"))
+    r = Receipt(supplier_id=sup.id, status="received", client_id=cid, device_id=device.id, received_by=emp,
+                received_at=_parse_time(data.get("received_at")), note="سند من الجهاز (من غير سند مسبق)",
+                device_notes=(data.get("notes") or "").strip()[:500] or None)
+    db.add(r)
+    seen = set()
+    for ln in lines:
+        p = _product(db, ln["product_id"])
+        mode, qty = ln["mode"], d3(ln["qty"])
+        if not _mode_ok(p, mode) or qty <= 0 or p.id in seen:
+            raise SyncError("bad_line")
+        seen.add(p.id)
+        r.lines.append(ReceiptLine(product_id=p.id, mode=mode, ordered=qty, received=qty, received_mode=mode,
+                                   note=(str(ln.get("note") or "").strip()[:200]) or None))
+    db.flush()
+    for line in r.lines:
+        move_stock(db, line.product, line.received_base, "receipt", ref=f"R-{r.id}", employee_id=emp)
+    bump(db, r)
+
+
+PUSHERS = {"sales": push_sale, "counts": push_count, "receipts": push_receipt, "new_receipts": push_new_receipt}
+ID_FIELD = {"sales": "id", "counts": "id", "receipts": "receipt_id", "new_receipts": "id"}
 
 
 def push(db: Session, device: Device, payload: dict):

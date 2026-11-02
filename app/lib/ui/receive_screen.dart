@@ -4,6 +4,7 @@ import '../data/models.dart';
 import '../util/feedback.dart';
 import '../util/format.dart';
 import 'history_screen.dart';
+import 'new_receipt_screen.dart';
 import 'scan_helpers.dart';
 import 'scope.dart';
 import 'widgets.dart';
@@ -88,12 +89,34 @@ class _ReceiveListScreenState extends State<ReceiveListScreen> {
                 icon: Icons.inbox_outlined,
                 title: 'مفيش سندات مستنية الاستلام',
                 sub: 'المشرف بيضيف السندات من لوحة التحكم. بعدها اعمل ${W.sync}.',
-                action: BigButton.light(W.syncNow, icon: Icons.sync, onPressed: () => app.sync(full: true)),
+                action: Column(
+                  children: [
+                    BigButton(
+                      'استلام من غير سند',
+                      icon: Icons.add,
+                      onPressed: () async {
+                        await Navigator.of(context).push(MaterialPageRoute(builder: (_) => const NewReceiptScreen()));
+                        _load();
+                      },
+                    ),
+                    const SizedBox(height: S.s),
+                    BigButton.light(W.syncNow, icon: Icons.sync, onPressed: () => app.sync(full: true)),
+                  ],
+                ),
               ),
             )
           : ListView(
               padding: const EdgeInsets.all(S.edge),
               children: [
+                BigButton.light(
+                  'استلام من غير سند',
+                  icon: Icons.add,
+                  onPressed: () async {
+                    await Navigator.of(context).push(MaterialPageRoute(builder: (_) => const NewReceiptScreen()));
+                    _load();
+                  },
+                ),
+                const SizedBox(height: S.s),
                 Text('${items!.length} سند مستني · امسح صنف لفتح السند بتاعه', style: T.sub),
                 Wrap(
                   alignment: WrapAlignment.spaceBetween,

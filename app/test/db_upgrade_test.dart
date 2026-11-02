@@ -43,5 +43,7 @@ void main() {
     expect(await db.get('version'), '0', reason: 'next sync downloads everything, including purchase prices');
     expect(await db.countOutbox('pending'), 1, reason: 'sales not yet sent survive the upgrade');
     expect(await db.lookup('nothing'), isNull, reason: 'barcodes table exists after the upgrade');
+    expect(await db.suppliers(), isEmpty, reason: 'suppliers table exists after the upgrade');
+    expect(await db.history('sales'), isEmpty, reason: 'history table exists after the upgrade');
   });
 }

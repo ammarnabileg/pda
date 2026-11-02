@@ -14,8 +14,10 @@ const _reasons = {
   'unknown_receipt': ('السند اتمسح من السيرفر', 'راجع المشرف.'),
   'receipt_not_open': ('السند اتلغى أو اتستلم من جهاز تاني', 'المشرف يراجع السند في لوحة التحكم.'),
   'invalid': ('بيانات مش مفهومة', 'بلّغ المسؤول عن السيستم.'),
+  'empty_receipt': ('سند فاضي', 'مفيش حاجة مطلوبة.'),
+  'no_supplier': ('السند من غير مورد', 'سجّله تاني واختار المورد.'),
 };
-const _kinds = {'sales': 'بيع', 'counts': 'جرد', 'receipts': 'استلام'};
+const _kinds = {'sales': 'بيع', 'counts': 'جرد', 'receipts': 'استلام', 'new_receipts': 'استلام من غير سند'};
 
 class SettingsScreen extends StatefulWidget {
   const SettingsScreen({super.key});

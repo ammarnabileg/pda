@@ -92,6 +92,7 @@ class _HistoryScreenState extends State<HistoryScreen> {
     final lines = (d['lines'] as List?) ?? const [];
     final (String title, String? amount, String details) = switch (e.kind) {
       'sales' => ('فاتورة ${e.id.substring(0, 8)}', money((d['total'] as num).toInt()), '${lines.length} صنف · ${d['employee'] ?? ''}'),
+      'new_receipts' => ('${d['supplier']} · من غير سند', null, '${lines.length} صنف · ${d['employee'] ?? ''}'),
       'receipts' => (
         '${d['supplier']} · سند ${e.id}',
         null,
@@ -150,6 +151,7 @@ class _HistoryDetail extends StatelessWidget {
     final title = switch (entry.kind) {
       'sales' => 'فاتورة ${entry.id.substring(0, 8)}',
       'receipts' => 'سند ${entry.id}',
+      'new_receipts' => 'استلام من غير سند',
       _ => 'جرد',
     };
     return WorkScaffold(
@@ -161,7 +163,7 @@ class _HistoryDetail extends StatelessWidget {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                if (entry.kind == 'receipts') Text('${d['supplier']}', style: T.item),
+                if (entry.kind == 'receipts' || entry.kind == 'new_receipts') Text('${d['supplier']}', style: T.item),
                 Text('${_day(entry.at)} ${_time(entry.at)}${d['employee'] != null ? ' · ${d['employee']}' : ''}', style: T.sub),
                 if (entry.kind == 'sales') Text('${money((d['total'] as num).toInt())} ${W.currency}', style: T.total),
                 if ((d['notes'] as String?)?.isNotEmpty == true) Text('ملاحظات: ${d['notes']}', style: T.sub),
@@ -180,7 +182,7 @@ class _HistoryDetail extends StatelessWidget {
                 amount: money((l['total'] as num).toInt()),
                 details: Text('${money((l['price'] as num).toInt())} × ${qtyText((l['qty'] as num).toInt(), l['mode'] as String)}'),
               ),
-              'receipts' => ItemRow(
+              'receipts' || 'new_receipts' => ItemRow(
                 title: '${l['name']}',
                 badge: Pill(
                   '${l['status']}',

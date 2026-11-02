@@ -166,3 +166,26 @@ def test_same_product_on_two_sale_lines(device_client, seed, db):
     db.expire_all()
     assert len(db.get(Sale, sid).lines) == 3
     assert db.get(Product, seed["rice"].id).stock == Decimal("40")  # 48 - 1 - 1 - 6
+
+
+def test_new_receipt_made_on_device(device_client, seed, db):
+    cid = str(uuid.uuid4())
+    body = {"new_receipts": [{"id": cid, "supplier_id": seed["supplier"].id, "notes": "جه من غير سند",
+            "lines": [{"product_id": seed["rice"].id, "mode": "carton", "qty": 2, "note": "كرتون مفتوح"},
+                      {"product_id": seed["sugar"].id, "mode": "kg", "qty": "3.5"}]}]}
+    r = device_client.post("/api/v1/sync/push", json=body).json()
+    assert r["accepted"]["new_receipts"] == [cid] and r["rejected"] == []
+    assert device_client.post("/api/v1/sync/push", json=body).json()["accepted"]["new_receipts"] == [cid]  # retry
+    db.expire_all()
+    rec = db.query(Receipt).filter_by(client_id=cid).one()
+    assert rec.status == "received" and len(rec.lines) == 2 and rec.device_notes == "جه من غير سند"
+    assert db.get(Product, seed["rice"].id).stock == Decimal("60")  # 48 + 12, counted once
+    assert db.get(Product, seed["sugar"].id).stock == Decimal("128.500")
+    # Unknown supplier by name is created.
+    r = device_client.post("/api/v1/sync/push", json={"new_receipts": [{"id": str(uuid.uuid4()), "supplier_name": "مورد جديد",
+        "lines": [{"product_id": seed["rice"].id, "mode": "piece", "qty": 1}]}]}).json()
+    assert r["rejected"] == []
+    from app.models import Supplier
+    assert db.query(Supplier).filter_by(name="مورد جديد").count() == 1
+    # Devices get the supplier list.
+    assert {s["name"] for s in device_client.get("/api/v1/sync/pull?since=0").json()["suppliers"]} >= {"مورد", "مورد جديد"}
