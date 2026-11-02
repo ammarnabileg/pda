@@ -196,6 +196,7 @@ def home(request: Request, user=Depends(current_user), db: Session = Depends(get
     ctx = {
         "sales_count": sales_today[0], "sales_total": sales_today[1],
         "open_receipts": db.scalar(select(func.count()).select_from(Receipt).where(Receipt.status == "open")),
+        "pending_receipts": db.scalar(select(func.count()).select_from(Receipt).where(Receipt.status == "pending")),
         "pending_counts": db.scalar(select(func.count()).select_from(CountSession).where(CountSession.status == "submitted")),
         "low_count": db.scalar(select(func.count()).select_from(low_q.subquery())),
         "low": db.scalars(low_q.order_by(Product.name).limit(10)).all(),
@@ -489,9 +490,10 @@ async def supplier_save(request: Request, user=Depends(current_user), db: Sessio
 @router.get("/receipts", response_class=HTMLResponse)
 def receipts(request: Request, status: str = "open", user=Depends(current_user), db: Session = Depends(get_db)):
     stmt = select(Receipt).order_by(Receipt.created_at.desc()).limit(200)
-    if status in ("open", "received", "cancelled"):
+    if status in ("open", "pending", "received", "cancelled", "rejected"):
         stmt = stmt.where(Receipt.status == status)
-    return render(request, "receipts.html", {"items": db.scalars(stmt).all(), "status": status})
+    pending = db.scalar(select(func.count()).select_from(Receipt).where(Receipt.status == "pending"))
+    return render(request, "receipts.html", {"items": db.scalars(stmt).all(), "status": status, "pending": pending})
 
 
 def receipt_form_ctx(db, r=None, form=None, errors=None):
@@ -590,6 +592,41 @@ async def receipt_update(rid: int, request: Request, user=Depends(current_user),
         return err
     flash(request, "تم حفظ السند")
     return redirect(f"/receipts/{r.id}")
+
+
+@router.post("/receipts/{rid}/approve")
+async def receipt_approve(rid: int, request: Request, user=Depends(current_user), db: Session = Depends(get_db)):
+    r = db.get(Receipt, rid)
+    if not r or r.status != "pending":
+        return redirect(f"/receipts/{rid}")
+    f = await request.form()
+    quantities, bad = {}, []
+    for line in r.lines:
+        raw = str(f.get(f"q_{line.id}", "")).strip()
+        if raw:
+            q = dec(raw)
+            if q is None or q < 0 or (line.mode != "kg" and q != q.to_integral_value()):
+                bad.append(line.product.name)
+            else:
+                quantities[line.id] = q
+    if bad:
+        flash(request, "كمية غلط في: " + "، ".join(bad), "error")
+        return redirect(f"/receipts/{rid}")
+    services.approve_receipt(db, r, user.id, quantities)
+    db.commit()
+    flash(request, f"تمت الموافقة على السند {r.id} وزيادة الأرصدة")
+    return redirect(f"/receipts/{rid}")
+
+
+@router.post("/receipts/{rid}/reject")
+def receipt_reject(rid: int, request: Request, user=Depends(current_user), db: Session = Depends(get_db)):
+    r = db.get(Receipt, rid)
+    if r and r.status == "pending":
+        r.status, r.approved_by, r.approved_at = "rejected", user.id, now()
+        services.bump(db, r)
+        db.commit()
+        flash(request, "تم رفض السند، والأرصدة ما اتغيرتش")
+    return redirect(f"/receipts/{rid}")
 
 
 @router.post("/receipts/{rid}/cancel")

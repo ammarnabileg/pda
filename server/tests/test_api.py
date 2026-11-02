@@ -178,9 +178,8 @@ def test_new_receipt_made_on_device(device_client, seed, db):
     assert device_client.post("/api/v1/sync/push", json=body).json()["accepted"]["new_receipts"] == [cid]  # retry
     db.expire_all()
     rec = db.query(Receipt).filter_by(client_id=cid).one()
-    assert rec.status == "received" and len(rec.lines) == 2 and rec.device_notes == "جه من غير سند"
-    assert db.get(Product, seed["rice"].id).stock == Decimal("60")  # 48 + 12, counted once
-    assert db.get(Product, seed["sugar"].id).stock == Decimal("128.500")
+    assert rec.status == "pending" and len(rec.lines) == 2 and rec.device_notes == "جه من غير سند"
+    assert db.get(Product, seed["rice"].id).stock == Decimal("48"), "no stock change before approval"
     # Unknown supplier by name is created.
     r = device_client.post("/api/v1/sync/push", json={"new_receipts": [{"id": str(uuid.uuid4()), "supplier_name": "مورد جديد",
         "lines": [{"product_id": seed["rice"].id, "mode": "piece", "qty": 1}]}]}).json()
@@ -189,3 +188,44 @@ def test_new_receipt_made_on_device(device_client, seed, db):
     assert db.query(Supplier).filter_by(name="مورد جديد").count() == 1
     # Devices get the supplier list.
     assert {s["name"] for s in device_client.get("/api/v1/sync/pull?since=0").json()["suppliers"]} >= {"مورد", "مورد جديد"}
+
+
+def test_supervisor_approves_device_receipt(device_client, admin_client, seed, db):
+    cid = str(uuid.uuid4())
+    device_client.post("/api/v1/sync/push", json={"new_receipts": [{"id": cid, "supplier_id": seed["supplier"].id,
+        "lines": [{"product_id": seed["rice"].id, "mode": "carton", "qty": 2}, {"product_id": seed["sugar"].id, "mode": "kg", "qty": "3.5"}]}]})
+    rec = db.query(Receipt).filter_by(client_id=cid).one()
+    assert "مستني موافقتك" in admin_client.get("/").text
+    page = admin_client.get(f"/receipts/{rec.id}").text
+    assert "موافقة وزيادة الأرصدة" in page
+    rice_line = next(l for l in rec.lines if l.product_id == seed["rice"].id)
+    sugar_line = next(l for l in rec.lines if l.product_id == seed["sugar"].id)
+    # A wrong quantity is refused and nothing changes.
+    admin_client.post(f"/receipts/{rec.id}/approve", data={f"q_{rice_line.id}": "1.5"})
+    db.expire_all()
+    assert db.get(Receipt, rec.id).status == "pending"
+    # Supervisor corrects rice to 3 cartons and approves.
+    admin_client.post(f"/receipts/{rec.id}/approve", data={f"q_{rice_line.id}": "3", f"q_{sugar_line.id}": "3.5"})
+    db.expire_all()
+    rec = db.get(Receipt, rec.id)
+    assert rec.status == "received" and rec.approved_by == seed["admin"].id
+    assert db.get(Product, seed["rice"].id).stock == Decimal("66")  # 48 + 3 x 6
+    assert db.get(Product, seed["sugar"].id).stock == Decimal("128.500")
+    # Approving again does nothing.
+    admin_client.post(f"/receipts/{rec.id}/approve", data={})
+    db.expire_all()
+    assert db.get(Product, seed["rice"].id).stock == Decimal("66")
+
+
+def test_supervisor_rejects_device_receipt(device_client, admin_client, seed, db):
+    cid = str(uuid.uuid4())
+    device_client.post("/api/v1/sync/push", json={"new_receipts": [{"id": cid, "supplier_id": seed["supplier"].id,
+        "lines": [{"product_id": seed["rice"].id, "mode": "piece", "qty": 5}]}]})
+    rec = db.query(Receipt).filter_by(client_id=cid).one()
+    admin_client.post(f"/receipts/{rec.id}/reject")
+    db.expire_all()
+    assert db.get(Receipt, rec.id).status == "rejected"
+    assert db.get(Product, seed["rice"].id).stock == Decimal("48")
+    for st in ("pending", "rejected", "all"):
+        assert admin_client.get(f"/receipts?status={st}").status_code == 200
+

@@ -183,7 +183,7 @@ class _NewReceiptScreenState extends State<NewReceiptScreen> {
     final ok = await confirmSheet(
       context,
       title: 'تأكيد الاستلام؟',
-      body: Text('المورد: $supplierName\n${lines.length} صنف.\nالرصيد هيزيد بالكميات دي، والسند هيظهر في لوحة التحكم.'),
+      body: Text('المورد: $supplierName\n${lines.length} صنف.\nالسند هيروح للمشرف يوافق عليه من لوحة التحكم، والرصيد هيزيد بعد موافقته.'),
       yes: 'نعم، تأكيد',
     );
     if (!ok || !mounted) return;
@@ -200,15 +200,14 @@ class _NewReceiptScreenState extends State<NewReceiptScreen> {
         for (final l in lines) {'product_id': l.productId, 'mode': l.mode, 'qty': money(l.qty), if (l.note != null) 'note': l.note},
       ],
     });
-    for (final l in lines) {
-      await app.db.adjustStock(l.productId, products[l.productId]!.toBase(l.qty, l.mode));
-    }
+    // No local stock change: the supervisor approves the voucher first.
     await app.db.addHistory('new_receipts', rid, {
       'supplier': supplierName,
       'employee': app.employee?.name,
       'diffs': 0,
       'lines': [
-        for (final l in lines) {'name': products[l.productId]!.name, 'received': qtyText(l.qty, l.mode), 'status': 'جديد', 'note': l.note},
+        for (final l in lines)
+          {'name': products[l.productId]!.name, 'received': qtyText(l.qty, l.mode), 'status': 'مستني موافقة المشرف', 'note': l.note},
       ],
     });
     await app.db.set(_draftKey, null);
@@ -437,6 +436,7 @@ class _Done extends StatelessWidget {
         ),
         const SizedBox(height: S.m),
         const Text('تم تسجيل الاستلام', textAlign: TextAlign.center, style: T.heading),
+        const Text('مستني موافقة المشرف — الرصيد هيزيد بعد الموافقة', textAlign: TextAlign.center, style: T.sub),
         Text('$supplier · $items صنف', textAlign: TextAlign.center, style: T.sub),
         const SizedBox(height: S.m),
         Center(child: SendStatus(outboxKey: 'new_receipts:$id')),

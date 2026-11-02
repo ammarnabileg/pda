@@ -126,6 +126,9 @@ class Receipt(Base):
     note: Mapped[str | None] = mapped_column(Text)
     # Set when the voucher was made on a device for a delivery that had none (idempotent upload).
     client_id: Mapped[str | None] = mapped_column(String(40), unique=True)
+    # Device-made vouchers wait for a supervisor (status "pending") before stock changes.
+    approved_by: Mapped[int | None] = mapped_column(ForeignKey("employees.id"))
+    approved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     device_notes: Mapped[str | None] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
     received_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
@@ -133,7 +136,8 @@ class Receipt(Base):
     device_id: Mapped[int | None] = mapped_column(ForeignKey("devices.id"))
     version: Mapped[int] = mapped_column(BigInteger, default=0, index=True)
     supplier: Mapped[Supplier] = relationship()
-    receiver: Mapped[Employee | None] = relationship()
+    receiver: Mapped[Employee | None] = relationship(foreign_keys=[received_by])
+    approver: Mapped[Employee | None] = relationship(foreign_keys=[approved_by])
     lines: Mapped[list["ReceiptLine"]] = relationship(
         back_populates="receipt", cascade="all, delete-orphan", order_by="ReceiptLine.id"
     )

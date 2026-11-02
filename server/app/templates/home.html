@@ -6,6 +6,7 @@
 <h2>محتاج إجراء</h2>
 <div class="needs">
   <a class="need {{ 'warn' if open_receipts else 'good' }}" href="/receipts?status=open">{{ icon('truck') }}<div><b>{{ open_receipts }}</b><small>{{ 'سند مستني الاستلام على الأجهزة' if open_receipts else 'مفيش سندات مستنية' }}</small></div></a>
+  {% if pending_receipts %}<a class="need bad" href="/receipts?status=pending">{{ icon('truck') }}<div><b>{{ pending_receipts }}</b><small>سند من الأجهزة مستني موافقتك</small></div></a>{% endif %}
   <a class="need {{ 'bad' if pending_counts else 'good' }}" href="/counts?status=submitted">{{ icon('check') }}<div><b>{{ pending_counts }}</b><small>{{ 'جرد مستني اعتمادك' if pending_counts else 'مفيش جرد مستني' }}</small></div></a>
   <a class="need {{ 'bad' if stale else 'good' }}" href="/devices">{{ icon('device') }}<div><b>{{ stale|length }}</b><small>{{ 'جهاز ماتصلش من أكتر من ساعة' if stale else 'كل الأجهزة متصلة' }}</small></div></a>
   <a class="need {{ 'warn' if low_count else 'good' }}" href="/products?low=1">{{ icon('warn') }}<div><b>{{ low_count }}</b><small>{{ 'صنف تحت حد الطلب' if low_count else 'مفيش نواقص' }}</small></div></a>

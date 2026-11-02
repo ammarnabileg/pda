@@ -230,7 +230,7 @@ def push_new_receipt(db: Session, device: Device, data: dict):
             db.add(sup)
             db.flush()
     emp = _employee_id(db, data.get("employee_id"))
-    r = Receipt(supplier_id=sup.id, status="received", client_id=cid, device_id=device.id, received_by=emp,
+    r = Receipt(supplier_id=sup.id, status="pending", client_id=cid, device_id=device.id, received_by=emp,
                 received_at=_parse_time(data.get("received_at")), note="سند من الجهاز (من غير سند مسبق)",
                 device_notes=(data.get("notes") or "").strip()[:500] or None)
     db.add(r)
@@ -243,9 +243,23 @@ def push_new_receipt(db: Session, device: Device, data: dict):
         seen.add(p.id)
         r.lines.append(ReceiptLine(product_id=p.id, mode=mode, ordered=qty, received=qty, received_mode=mode,
                                    note=(str(ln.get("note") or "").strip()[:200]) or None))
+    # No stock change yet: a supervisor approves it in the dashboard first.
+    bump(db, r)
+
+
+def approve_receipt(db: Session, r: Receipt, user_id: int, quantities: dict | None = None):
+    """Supervisor approves a device-made voucher, optionally correcting quantities; stock goes up now."""
+    if r.status != "pending":
+        return
+    for line in r.lines:
+        q = (quantities or {}).get(line.id)
+        if q is not None:
+            line.received = line.ordered = d3(q)
     db.flush()
     for line in r.lines:
-        move_stock(db, line.product, line.received_base, "receipt", ref=f"R-{r.id}", employee_id=emp)
+        move_stock(db, line.product, line.received_base, "receipt", ref=f"R-{r.id}", employee_id=user_id)
+    r.status = "received"
+    r.approved_by, r.approved_at = user_id, now()
     bump(db, r)
 
 

@@ -7,11 +7,27 @@
   <a class="btn light no-print" href="/receipts">رجوع</a></div>
 <div class="card grid">
   <div><small class="muted">المورد</small><br><b>{{ r.supplier.name }}</b></div>
-  <div><small class="muted">الحالة</small><br>{% if r.status == 'open' %}<span class="pill p-warn">بانتظار الاستلام</span>{% elif r.status == 'received' %}<span class="pill p-ok">تم الاستلام</span>{% else %}<span class="pill p-gray">ملغي</span>{% endif %}</div>
+  <div><small class="muted">الحالة</small><br>{% if r.status == 'open' %}<span class="pill p-warn">بانتظار الاستلام</span>{% elif r.status == 'pending' %}<span class="pill p-red">⚠ مستني موافقتك</span>{% elif r.status == 'received' %}<span class="pill p-ok">تم الاستلام</span>{% elif r.status == 'rejected' %}<span class="pill p-gray">مرفوض</span>{% else %}<span class="pill p-gray">ملغي</span>{% endif %}</div>
   <div><small class="muted">أُنشئ</small><br>{{ r.created_at|dt }}</div>
-  {% if r.status == 'received' %}<div><small class="muted">استلمه</small><br>{{ r.receiver.name if r.receiver else '—' }} · {{ r.received_at|dt }}</div>{% endif %}
+  {% if r.status in ('received', 'pending', 'rejected') %}<div><small class="muted">استلمه</small><br>{{ r.receiver.name if r.receiver else '—' }} · {{ r.received_at|dt }}</div>{% endif %}
+  {% if r.approved_at %}<div><small class="muted">{{ 'وافق عليه' if r.status == 'received' else 'رفضه' }}</small><br>{{ r.approver.name if r.approver else '—' }} · {{ r.approved_at|dt }}</div>{% endif %}
 </div>
 {% if r.note %}<p><b>ملاحظة:</b> {{ r.note }}</p>{% endif %}
+{% if r.status == 'pending' %}
+<div class="card no-print" style="border-color:var(--red)">
+  <h2 style="margin-top:0">السند ده اتعمل على جهاز {{ r.device.name if r.device else '' }} من غير سند مسبق</h2>
+  <p>راجع الأصناف والكميات. لو فيه كمية غلط، صلّحها في الخانة قبل الموافقة. <b>الأرصدة مش هتزيد غير بعد الموافقة.</b></p>
+  <form method="post" action="/receipts/{{ r.id }}/approve" id="approve" onsubmit="return confirm('الموافقة على السند وزيادة الأرصدة؟')">
+    <div class="table-wrap" style="max-height:none"><table><thead><tr><th>الصنف</th><th>اللي اتسجل على الجهاز</th><th>الكمية المعتمدة</th><th>ملاحظة</th></tr></thead>
+    {% for l in r.lines %}<tr><td>{{ l.product.name }}</td><td>{{ l.received|qty(l.product.unit) }} {{ MODES[l.mode] }}</td>
+      <td><input name="q_{{ l.id }}" value="{{ l.received|qty(l.product.unit) }}" inputmode="decimal" dir="ltr" style="max-width:110px" aria-label="الكمية المعتمدة لـ {{ l.product.name }}"> {{ MODES[l.mode] }}</td>
+      <td>{{ l.note or '' }}</td></tr>{% endfor %}
+    </table></div>
+    <button class="btn">موافقة وزيادة الأرصدة</button>
+  </form>
+  <form class="inline" method="post" action="/receipts/{{ r.id }}/reject" onsubmit="return confirm('رفض السند؟ الأرصدة مش هتتغير.')" style="margin-top:8px"><button class="btn red">رفض</button></form>
+</div>
+{% endif %}
 {% if r.device_notes %}<div class="alert error">ملاحظات الموظف عند الاستلام: {{ r.device_notes }}</div>{% endif %}
 {% set only = request.query_params.get('only') == 'diff' %}
 {% set diff_lines = r.lines|selectattr('diff_base')|list %}

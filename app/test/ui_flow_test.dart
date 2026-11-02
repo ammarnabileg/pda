@@ -571,6 +571,9 @@ void main() {
     await tester.tap(find.text('نعم، تأكيد'));
     await settle(tester, 800);
     expect(find.text('تم تسجيل الاستلام'), findsOneWidget);
+    expect(find.textContaining('مستني موافقة المشرف'), findsOneWidget);
+    final rice = (await tester.runAsync(() => app.db.productByBarcode('6281000123456')))!;
+    expect(rice.stock, 48000, reason: 'device stock waits for the supervisor too');
     final out = (await tester.runAsync(() => app.db.pendingOutbox()))!;
     expect(out.single['kind'], 'new_receipts');
     expect(out.single['payload'].toString(), contains('"supplier_name":"مورد جديد"'));
@@ -578,6 +581,8 @@ void main() {
     final hist = (await tester.runAsync(() => app.db.history('receipts')))!;
     expect(hist.single.kind, 'new_receipts');
     expect(await tester.runAsync(() => app.db.getJson('draft_new_receipt')), isNull);
+    await tester.pump(const Duration(seconds: 30));
+    await tester.runAsync(() => Future.delayed(const Duration(milliseconds: 300)));
     await tester.pump(const Duration(seconds: 30));
   });
 }
