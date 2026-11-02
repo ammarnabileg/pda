@@ -40,31 +40,37 @@ class Product {
   }
 
   Map<String, Object?> toRow() => {
-        'id': id, 'barcode': barcode, 'name': name, 'unit': unit, 'price': price,
-        'carton': carton, 'stock': stock, 'active': active ? 1 : 0,
-      };
+    'id': id,
+    'barcode': barcode,
+    'name': name,
+    'unit': unit,
+    'price': price,
+    'carton': carton,
+    'stock': stock,
+    'active': active ? 1 : 0,
+  };
 
   factory Product.fromRow(Map<String, Object?> r) => Product(
-        id: r['id'] as int,
-        barcode: r['barcode'] as String,
-        name: r['name'] as String,
-        unit: r['unit'] as String,
-        price: r['price'] as int,
-        carton: r['carton'] as int,
-        stock: r['stock'] as int,
-        active: (r['active'] as int) == 1,
-      );
+    id: r['id'] as int,
+    barcode: r['barcode'] as String,
+    name: r['name'] as String,
+    unit: r['unit'] as String,
+    price: r['price'] as int,
+    carton: r['carton'] as int,
+    stock: r['stock'] as int,
+    active: (r['active'] as int) == 1,
+  );
 
   factory Product.fromApi(Map<String, dynamic> j) => Product(
-        id: j['id'] as int,
-        barcode: j['barcode'] as String,
-        name: j['name'] as String,
-        unit: j['unit'] as String,
-        price: parseMilli(j['price'].toString()) ?? 0,
-        carton: j['carton'] as int,
-        stock: parseMilli(j['stock'].toString()) ?? 0,
-        active: j['active'] as bool,
-      );
+    id: j['id'] as int,
+    barcode: j['barcode'] as String,
+    name: j['name'] as String,
+    unit: j['unit'] as String,
+    price: parseMilli(j['price'].toString()) ?? 0,
+    carton: j['carton'] as int,
+    stock: parseMilli(j['stock'].toString()) ?? 0,
+    active: j['active'] as bool,
+  );
 }
 
 class Employee {
@@ -88,35 +94,34 @@ class Employee {
   bool get canStock => role != 'cashier';
   bool get isSupervisor => role == 'supervisor' || role == 'admin';
 
-  static const roleNames = {
-    'cashier': 'كاشير',
-    'storekeeper': 'أمين مخزن',
-    'supervisor': 'مشرف',
-    'admin': 'مدير',
-  };
+  static const roleNames = {'cashier': 'كاشير', 'storekeeper': 'أمين مخزن', 'supervisor': 'مشرف', 'admin': 'مدير'};
 
   Map<String, Object?> toRow() => {
-        'id': id, 'name': name, 'role': role, 'pin_salt': pinSalt,
-        'pin_hash': pinHash, 'active': active ? 1 : 0,
-      };
+    'id': id,
+    'name': name,
+    'role': role,
+    'pin_salt': pinSalt,
+    'pin_hash': pinHash,
+    'active': active ? 1 : 0,
+  };
 
   factory Employee.fromRow(Map<String, Object?> r) => Employee(
-        id: r['id'] as int,
-        name: r['name'] as String,
-        role: r['role'] as String,
-        pinSalt: r['pin_salt'] as String,
-        pinHash: r['pin_hash'] as String,
-        active: (r['active'] as int) == 1,
-      );
+    id: r['id'] as int,
+    name: r['name'] as String,
+    role: r['role'] as String,
+    pinSalt: r['pin_salt'] as String,
+    pinHash: r['pin_hash'] as String,
+    active: (r['active'] as int) == 1,
+  );
 
   factory Employee.fromApi(Map<String, dynamic> j) => Employee(
-        id: j['id'] as int,
-        name: j['name'] as String,
-        role: j['role'] as String,
-        pinSalt: j['pin_salt'] as String,
-        pinHash: j['pin_hash'] as String,
-        active: j['active'] as bool,
-      );
+    id: j['id'] as int,
+    name: j['name'] as String,
+    role: j['role'] as String,
+    pinSalt: j['pin_salt'] as String,
+    pinHash: j['pin_hash'] as String,
+    active: j['active'] as bool,
+  );
 }
 
 class ReceiptLine {

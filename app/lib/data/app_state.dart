@@ -164,8 +164,8 @@ class AppState extends ChangeNotifier {
       status = e.code == 'offline'
           ? SyncStatus.offline
           : e.code == 'unpaired'
-              ? SyncStatus.unpaired
-              : SyncStatus.error;
+          ? SyncStatus.unpaired
+          : SyncStatus.error;
     } catch (e) {
       error = 'error';
       status = SyncStatus.error;

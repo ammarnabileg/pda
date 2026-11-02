@@ -67,8 +67,11 @@ class LocalDb {
     code = code.trim();
     if (code.isEmpty) return null;
     final variants = {code, '0$code', if (code.startsWith('0')) code.substring(1)}.toList();
-    final r = await db.query('products',
-        where: 'active = 1 AND barcode IN (${List.filled(variants.length, '?').join(',')})', whereArgs: variants);
+    final r = await db.query(
+      'products',
+      where: 'active = 1 AND barcode IN (${List.filled(variants.length, '?').join(',')})',
+      whereArgs: variants,
+    );
     if (r.isEmpty) return null;
     final exact = r.where((x) => x['barcode'] == code);
     return Product.fromRow(exact.isNotEmpty ? exact.first : r.first);
@@ -76,11 +79,13 @@ class LocalDb {
 
   Future<List<Product>> searchProducts(String q, {int limit = 40}) async {
     q = q.trim();
-    final r = await db.query('products',
-        where: q.isEmpty ? 'active = 1' : 'active = 1 AND (name LIKE ? OR barcode LIKE ?)',
-        whereArgs: q.isEmpty ? null : ['%$q%', '%$q%'],
-        orderBy: 'name',
-        limit: limit);
+    final r = await db.query(
+      'products',
+      where: q.isEmpty ? 'active = 1' : 'active = 1 AND (name LIKE ? OR barcode LIKE ?)',
+      whereArgs: q.isEmpty ? null : ['%$q%', '%$q%'],
+      orderBy: 'name',
+      limit: limit,
+    );
     return r.map(Product.fromRow).toList();
   }
 
@@ -91,8 +96,7 @@ class LocalDb {
     return {for (final row in r) row['id'] as int: Product.fromRow(row)};
   }
 
-  Future<int> productCount() async =>
-      Sqflite.firstIntValue(await db.rawQuery('SELECT COUNT(*) FROM products WHERE active = 1')) ?? 0;
+  Future<int> productCount() async => Sqflite.firstIntValue(await db.rawQuery('SELECT COUNT(*) FROM products WHERE active = 1')) ?? 0;
 
   /// Local stock estimate until the next sync brings the server's number.
   Future<void> adjustStock(int productId, int deltaMilli) =>
@@ -127,16 +131,16 @@ class LocalDb {
         .map((l) => ReceiptLine(l['product_id'] as int, l['mode'] as String, parseMilli(l['ordered'].toString()) ?? 0))
         .toList();
     return ReceiptDoc(
-        id: r['id'] as int,
-        supplier: r['supplier'] as String,
-        status: r['status'] as String,
-        note: r['note'] as String,
-        createdAt: r['created_at'] as String,
-        lines: lines);
+      id: r['id'] as int,
+      supplier: r['supplier'] as String,
+      status: r['status'] as String,
+      note: r['note'] as String,
+      createdAt: r['created_at'] as String,
+      lines: lines,
+    );
   }
 
-  Future<void> markReceiptSent(int id) =>
-      db.update('receipts', {'status': 'sent'}, where: 'id = ?', whereArgs: [id]);
+  Future<void> markReceiptSent(int id) => db.update('receipts', {'status': 'sent'}, where: 'id = ?', whereArgs: [id]);
 
   // ---------- server pull ----------
 
@@ -161,24 +165,27 @@ class LocalDb {
         final sentHere = existing.isNotEmpty && existing.first['status'] == 'sent';
         // Keep "sent" while our upload is pending, so a stale "open" does not bring it back.
         final status = (sentHere && j['status'] == 'open') ? 'sent' : j['status'] as String;
-        await txn.insert(
-            'receipts',
-            {
-              'id': j['id'], 'supplier': j['supplier'], 'status': status, 'note': j['note'] ?? '',
-              'created_at': j['created_at'], 'lines': jsonEncode(j['lines']),
-            },
-            conflictAlgorithm: ConflictAlgorithm.replace);
+        await txn.insert('receipts', {
+          'id': j['id'],
+          'supplier': j['supplier'],
+          'status': status,
+          'note': j['note'] ?? '',
+          'created_at': j['created_at'],
+          'lines': jsonEncode(j['lines']),
+        }, conflictAlgorithm: ConflictAlgorithm.replace);
       }
-      await txn.insert('kv', {'key': 'version', 'value': '${data['version']}'},
-          conflictAlgorithm: ConflictAlgorithm.replace);
+      await txn.insert('kv', {'key': 'version', 'value': '${data['version']}'}, conflictAlgorithm: ConflictAlgorithm.replace);
     });
   }
 
   // ---------- outbox ----------
 
-  Future<void> enqueue(String kind, String id, Map<String, Object?> payload) => db.insert(
-      'outbox', {'id': '$kind:$id', 'kind': kind, 'payload': jsonEncode(payload), 'created_at': DateTime.now().toIso8601String()},
-      conflictAlgorithm: ConflictAlgorithm.replace);
+  Future<void> enqueue(String kind, String id, Map<String, Object?> payload) => db.insert('outbox', {
+    'id': '$kind:$id',
+    'kind': kind,
+    'payload': jsonEncode(payload),
+    'created_at': DateTime.now().toIso8601String(),
+  }, conflictAlgorithm: ConflictAlgorithm.replace);
 
   Future<List<Map<String, Object?>>> pendingOutbox({int limit = 100}) =>
       db.query('outbox', where: "state = 'pending'", orderBy: 'created_at', limit: limit);
@@ -186,8 +193,7 @@ class LocalDb {
   Future<int> countOutbox(String state) async =>
       Sqflite.firstIntValue(await db.rawQuery('SELECT COUNT(*) FROM outbox WHERE state = ?', [state])) ?? 0;
 
-  Future<List<Map<String, Object?>>> rejectedOutbox() =>
-      db.query('outbox', where: "state = 'rejected'", orderBy: 'created_at DESC');
+  Future<List<Map<String, Object?>>> rejectedOutbox() => db.query('outbox', where: "state = 'rejected'", orderBy: 'created_at DESC');
 
   Future<void> removeOutbox(String id) => db.delete('outbox', where: 'id = ?', whereArgs: [id]);
 

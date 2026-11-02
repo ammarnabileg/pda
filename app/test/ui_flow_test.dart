@@ -1,3 +1,5 @@
+import 'dart:io';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -16,7 +18,9 @@ const keys = {
 
 Future<LocalDb> seededDb() async {
   sqfliteFfiInit();
-  final db = await LocalDb.open(path: inMemoryDatabasePath, factory: databaseFactoryFfi);
+  // A fresh file per test: in-memory databases can be shared between tests in one process.
+  final path = '${Directory.systemTemp.createTempSync('tamween_test').path}/t.db';
+  final db = await LocalDb.open(path: path, factory: databaseFactoryFfi);
   const salt = 's1';
   await db.applyPull({
     'version': 10,
@@ -42,6 +46,14 @@ Future<void> scan(WidgetTester tester, String code) async {
     await tester.sendKeyEvent(keys[ch]!);
   }
   await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+}
+
+/// Waits (in real time) until [f] shows up; screens load from the database asynchronously.
+Future<void> waitFor(WidgetTester tester, Finder f) async {
+  for (var i = 0; i < 50 && f.evaluate().isEmpty; i++) {
+    await tester.runAsync(() => Future.delayed(const Duration(milliseconds: 100)));
+    await tester.pump(const Duration(milliseconds: 100));
+  }
 }
 
 /// Lets real async work (database, PIN hashing) finish, then redraws.
@@ -230,6 +242,42 @@ void main() {
     await tester.pump(const Duration(milliseconds: 300));
     await settle(tester);
     expect(find.text('الصنف غير مسجل'), findsNothing);
+    await tester.pump(const Duration(seconds: 30));
+  });
+
+  testWidgets('scanner works in the search box, the number pad and the receipt list', (tester) async {
+    await startApp(tester);
+    await login(tester, 'محمود', '3333');
+
+    // Receipt list: scanning opens the voucher with that item and asks its quantity.
+    await tester.tap(find.text('استلام بضاعة'));
+    await settle(tester);
+    await scan(tester, '6281000123456');
+    await waitFor(tester, find.textContaining('المطلوب: 10 كرتون. اكتب اللي وصل'));
+    expect(find.textContaining('المطلوب: 10 كرتون. اكتب اللي وصل'), findsOneWidget);
+
+    // Number pad, text-injecting scanner: a new scan closes the pad and is handled as a scan.
+    tester.testTextInput.enterText('6281000123456');
+    await tester.testTextInput.receiveAction(TextInputAction.done);
+    await tester.pump(const Duration(milliseconds: 500));
+    await waitFor(tester, find.textContaining('المطلوب: 10 كرتون. اكتب اللي وصل'));
+    expect(find.textContaining('المطلوب: 10 كرتون. اكتب اللي وصل'), findsOneWidget, reason: 'reopened for the scanned item');
+    await tester.pump(const Duration(seconds: 30));
+  });
+
+  testWidgets('scanning while the name search is open picks the product', (tester) async {
+    final app = await startApp(tester);
+    await login(tester, 'محمود', '3333');
+    await tester.tap(find.text('جرد'));
+    await settle(tester);
+    await tester.tap(find.text('ابحث بالاسم'));
+    await settle(tester);
+    await tester.enterText(find.byType(TextField).last, '2100000012345');
+    await tester.testTextInput.receiveAction(TextInputAction.done);
+    await settle(tester);
+    expect(find.text('سكر أبيض (بالكيلو)'), findsWidgets);
+    expect(find.text('اكتب العدد الموجود على الرف'), findsOneWidget);
+    expect(app.employee?.name, 'محمود');
     await tester.pump(const Duration(seconds: 30));
   });
 }

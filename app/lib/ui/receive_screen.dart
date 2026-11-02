@@ -42,51 +42,81 @@ class _ReceiveListScreenState extends State<ReceiveListScreen> {
     }
   }
 
+  /// Scanning here opens the voucher that contains the item, straight on its quantity.
+  Future<void> _onScan(String code) async {
+    final app = AppScope.read(context);
+    final p = await findScanned(context, app, code);
+    if (p == null || !mounted) return;
+    final having = (items ?? []).where((r) => r.lines.any((l) => l.productId == p.id)).toList();
+    if (having.length == 1) {
+      await Navigator.of(context).push(
+        MaterialPageRoute(
+          builder: (_) => ReceiveScreen(receiptId: having.first.id, openProductId: p.id),
+        ),
+      );
+      _load();
+    } else if (having.isEmpty) {
+      beepError();
+      toast(context, '${p.name} مش موجود في أي سند مفتوح');
+    } else {
+      toast(context, '${p.name} موجود في ${having.length} سندات. افتح السند الصح الأول');
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return ScanListener(
-      onScan: (_) {
-        beepError();
-        toast(context, 'افتح السند الأول، وبعدين امسح الصنف');
-      },
+      onScan: _onScan,
       child: Scaffold(
         appBar: topBar(context, 'استلام بضاعة'),
         body: items == null
             ? const Center(child: CircularProgressIndicator())
             : items!.isEmpty
-                ? const Padding(
-                    padding: EdgeInsets.all(24),
-                    child: Text('مفيش سندات بانتظار الاستلام.\nالمشرف بيضيفها من لوحة التحكم.',
-                        textAlign: TextAlign.center, style: TextStyle(fontSize: 20, color: cMuted)),
-                  )
-                : ListView(padding: const EdgeInsets.all(12), children: [
-                    for (final r in items!)
-                      Padding(
-                        padding: const EdgeInsets.only(bottom: 10),
-                        child: Material(
-                          color: Colors.white,
-                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16), side: const BorderSide(color: cLine, width: 2)),
-                          child: InkWell(
-                            borderRadius: BorderRadius.circular(16),
-                            onTap: () async {
-                              await Navigator.of(context).push(MaterialPageRoute(builder: (_) => ReceiveScreen(receiptId: r.id)));
-                              _load();
-                            },
-                            child: Padding(
-                              padding: const EdgeInsets.all(14),
-                              child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            ? const Padding(
+                padding: EdgeInsets.all(24),
+                child: Text(
+                  'مفيش سندات بانتظار الاستلام.\nالمشرف بيضيفها من لوحة التحكم.',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(fontSize: 20, color: cMuted),
+                ),
+              )
+            : ListView(
+                padding: const EdgeInsets.all(12),
+                children: [
+                  for (final r in items!)
+                    Padding(
+                      padding: const EdgeInsets.only(bottom: 10),
+                      child: Material(
+                        color: Colors.white,
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(16),
+                          side: const BorderSide(color: cLine, width: 2),
+                        ),
+                        child: InkWell(
+                          borderRadius: BorderRadius.circular(16),
+                          onTap: () async {
+                            await Navigator.of(context).push(MaterialPageRoute(builder: (_) => ReceiveScreen(receiptId: r.id)));
+                            _load();
+                          },
+                          child: Padding(
+                            padding: const EdgeInsets.all(14),
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
                                 Text(r.supplier, style: const TextStyle(fontSize: 22, fontWeight: FontWeight.w800)),
                                 Text('سند رقم ${r.id} · ${r.lines.length} أصناف', style: const TextStyle(fontSize: 18, color: cMuted)),
                                 const SizedBox(height: 8),
                                 (progress[r.id] ?? 0) > 0
                                     ? Pill('تمت مراجعة ${progress[r.id]} من ${r.lines.length}', fg: cOrange, bg: cOrange2)
                                     : const Pill('لم يبدأ'),
-                              ]),
+                              ],
                             ),
                           ),
                         ),
                       ),
-                  ]),
+                    ),
+                ],
+              ),
       ),
     );
   }
@@ -100,7 +130,10 @@ class _Recv {
 
 class ReceiveScreen extends StatefulWidget {
   final int receiptId;
-  const ReceiveScreen({super.key, required this.receiptId});
+
+  /// When opened by scanning from the list: ask this item's quantity right away.
+  final int? openProductId;
+  const ReceiveScreen({super.key, required this.receiptId, this.openProductId});
   @override
   State<ReceiveScreen> createState() => _ReceiveScreenState();
 }
@@ -132,13 +165,21 @@ class _ReceiveScreenState extends State<ReceiveScreen> {
     }
     if (doc != null) products.addAll(await db.productsByIds([...doc.lines.map((l) => l.productId), ...extra]));
     if (mounted) setState(() => r = doc);
+    final open = widget.openProductId;
+    if (open != null && doc != null && mounted && products.containsKey(open)) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) _qty(open);
+      });
+    }
   }
 
   Future<void> _save() => AppScope.read(context).db.setJson(_key, {
-        'recv': {for (final e in recv.entries) '${e.key}': {'q': e.value.qty, 'm': e.value.mode}},
-        'extra': extra,
-        'notes': notes,
-      });
+    'recv': {
+      for (final e in recv.entries) '${e.key}': {'q': e.value.qty, 'm': e.value.mode},
+    },
+    'extra': extra,
+    'notes': notes,
+  });
 
   ReceiptLine? _line(int pid) {
     for (final l in r!.lines) {
@@ -169,13 +210,17 @@ class _ReceiveScreenState extends State<ReceiveScreen> {
     final p = products[pid]!;
     final l = _line(pid);
     final cur = recv[pid];
-    final res = await numberPad(context,
-        title: p.name,
-        hint: l != null ? 'المطلوب: ${qtyText(l.ordered, l.mode)}. اكتب اللي وصل فعلاً (صفر لو ماوصلش)' : 'صنف غير موجود في السند. اكتب الكمية اللي وصلت',
-        modes: p.modes,
-        mode: cur?.mode ?? l?.mode ?? p.modes.first,
-        initial: cur?.qty,
-        allowZero: l != null);
+    final res = await numberPad(
+      context,
+      title: p.name,
+      hint: l != null
+          ? 'المطلوب: ${qtyText(l.ordered, l.mode)}. اكتب اللي وصل فعلاً (صفر لو ماوصلش)'
+          : 'صنف غير موجود في السند. اكتب الكمية اللي وصلت',
+      modes: p.modes,
+      mode: cur?.mode ?? l?.mode ?? p.modes.first,
+      initial: cur?.qty,
+      allowZero: l != null,
+    );
     if (res?.scanned != null) return _onScan(res!.scanned!);
     if (res == null || !mounted) return;
     setState(() {
@@ -200,12 +245,14 @@ class _ReceiveScreenState extends State<ReceiveScreen> {
     products[p.id] = p;
     if (_line(p.id) != null || extra.contains(p.id)) return _qty(p.id);
     beepError();
-    final ok = await confirmSheet(context,
-        title: 'الصنف ده مش في السند',
-        body: Text('${p.name}\nغير مطلوب من المورد في هذا السند.'),
-        yes: 'أضفه كصنف زائد',
-        no: 'إلغاء',
-        danger: true);
+    final ok = await confirmSheet(
+      context,
+      title: 'الصنف ده مش في السند',
+      body: Text('${p.name}\nغير مطلوب من المورد في هذا السند.'),
+      yes: 'أضفه كصنف زائد',
+      no: 'إلغاء',
+      danger: true,
+    );
     if (ok) await _qty(p.id, isExtra: true);
   }
 
@@ -224,18 +271,24 @@ class _ReceiveScreenState extends State<ReceiveScreen> {
     final left = r!.lines.where((l) => !recv.containsKey(l.productId)).toList();
     if (left.isNotEmpty) {
       beepError();
-      await alertSheet(context,
-          title: 'باقي ${left.length} أصناف لم تراجع',
-          body: Text('${left.map((l) => '• ${products[l.productId]?.name ?? ''}').join('\n')}\n\nاضغط «وصل كامل» أو «كمية مختلفة» لكل صنف.'));
+      await alertSheet(
+        context,
+        title: 'باقي ${left.length} أصناف لم تراجع',
+        body: Text('${left.map((l) => '• ${products[l.productId]?.name ?? ''}').join('\n')}\n\nاضغط «وصل كامل» أو «كمية مختلفة» لكل صنف.'),
+      );
       return;
     }
     final diffs = [...r!.lines.map((l) => l.productId), ...extra].where((pid) => _status(pid)!.$2 != cGreen).toList();
-    final ok = await confirmSheet(context,
-        title: 'تأكيد الاستلام؟',
-        body: Text(diffs.isEmpty
+    final ok = await confirmSheet(
+      context,
+      title: 'تأكيد الاستلام؟',
+      body: Text(
+        diffs.isEmpty
             ? 'كل الأصناف مطابقة للمطلوب.'
-            : 'فيه فروقات في ${diffs.length} صنف:\n${diffs.map((pid) => '• ${products[pid]!.name}: ${_status(pid)!.$1}').join('\n')}'),
-        yes: 'نعم، تأكيد');
+            : 'فيه فروقات في ${diffs.length} صنف:\n${diffs.map((pid) => '• ${products[pid]!.name}: ${_status(pid)!.$1}').join('\n')}',
+      ),
+      yes: 'نعم، تأكيد',
+    );
     if (!ok || !mounted) return;
     final app = AppScope.read(context);
     await app.db.enqueue('receipts', '${r!.id}', {
@@ -244,7 +297,7 @@ class _ReceiveScreenState extends State<ReceiveScreen> {
       'received_at': DateTime.now().toUtc().toIso8601String(),
       'notes': notes.join('، '),
       'lines': [
-        for (final e in recv.entries) {'product_id': e.key, 'mode': e.value.mode, 'qty': money(e.value.qty)}
+        for (final e in recv.entries) {'product_id': e.key, 'mode': e.value.mode, 'qty': money(e.value.qty)},
       ],
     });
     for (final e in recv.entries) {
@@ -264,51 +317,73 @@ class _ReceiveScreenState extends State<ReceiveScreen> {
     final doc = r;
     final flash = flashId;
     flashId = null;
-    if (doc == null) return Scaffold(appBar: topBar(context, 'سند'), body: const Center(child: CircularProgressIndicator()));
+    if (doc == null) {
+      return Scaffold(
+        appBar: topBar(context, 'سند'),
+        body: const Center(child: CircularProgressIndicator()),
+      );
+    }
     final reviewed = doc.lines.where((l) => recv.containsKey(l.productId)).length;
     final all = [...doc.lines.map((l) => l.productId), ...extra];
     return ScanListener(
       onScan: _onScan,
       child: Scaffold(
         appBar: topBar(context, 'سند ${doc.id}'),
-        body: ListView(padding: const EdgeInsets.all(12), children: [
-          CardBox(
-            child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-              Text(doc.supplier, style: const TextStyle(fontSize: 22, fontWeight: FontWeight.w800)),
-              Text('تمت مراجعة $reviewed من ${doc.lines.length} أصناف', style: const TextStyle(fontSize: 17, color: cMuted)),
-              if (doc.note.isNotEmpty) Text('ملاحظة: ${doc.note}', style: const TextStyle(fontSize: 17)),
-              const SizedBox(height: 8),
-              ClipRRect(
-                borderRadius: BorderRadius.circular(99),
-                child: LinearProgressIndicator(
-                    value: doc.lines.isEmpty ? 0 : reviewed / doc.lines.length, minHeight: 12, backgroundColor: cGray2, color: cGreen),
+        body: ListView(
+          padding: const EdgeInsets.all(12),
+          children: [
+            CardBox(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(doc.supplier, style: const TextStyle(fontSize: 22, fontWeight: FontWeight.w800)),
+                  Text('تمت مراجعة $reviewed من ${doc.lines.length} أصناف', style: const TextStyle(fontSize: 17, color: cMuted)),
+                  if (doc.note.isNotEmpty) Text('ملاحظة: ${doc.note}', style: const TextStyle(fontSize: 17)),
+                  const SizedBox(height: 8),
+                  ClipRRect(
+                    borderRadius: BorderRadius.circular(99),
+                    child: LinearProgressIndicator(
+                      value: doc.lines.isEmpty ? 0 : reviewed / doc.lines.length,
+                      minHeight: 12,
+                      backgroundColor: cGray2,
+                      color: cGreen,
+                    ),
+                  ),
+                ],
               ),
-            ]),
-          ),
-          ScanBar(
+            ),
+            ScanBar(
               text: 'امسح الصنف لتسجيل كميته',
               onType: () async => _onProduct(await typeAndFind(context, app)),
-              onSearch: () async => _onProduct(await searchAndPick(context, app))),
-          for (final pid in all) _lineCard(pid, pid == flash),
-          const Padding(
-            padding: EdgeInsets.fromLTRB(2, 10, 2, 6),
-            child: Text('ملاحظات (اختياري)', style: TextStyle(fontSize: 19, fontWeight: FontWeight.w800)),
-          ),
-          Wrap(spacing: 8, runSpacing: 8, children: [
-            for (final n in noteChips)
-              FilterChip(
-                label: Text(n, style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w700)),
-                selected: notes.contains(n),
-                selectedColor: cOrange2,
-                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 10),
-                onSelected: (on) {
-                  setState(() => on ? notes.add(n) : notes.remove(n));
-                  _save();
-                },
-              ),
-          ]),
-        ]),
-        bottomNavigationBar: Footer(children: [BigButton('تأكيد الاستلام', icon: Icons.check, onPressed: _finish)]),
+              onSearch: () async => _onProduct(await searchAndPick(context, app)),
+            ),
+            for (final pid in all) _lineCard(pid, pid == flash),
+            const Padding(
+              padding: EdgeInsets.fromLTRB(2, 10, 2, 6),
+              child: Text('ملاحظات (اختياري)', style: TextStyle(fontSize: 19, fontWeight: FontWeight.w800)),
+            ),
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: [
+                for (final n in noteChips)
+                  FilterChip(
+                    label: Text(n, style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w700)),
+                    selected: notes.contains(n),
+                    selectedColor: cOrange2,
+                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 10),
+                    onSelected: (on) {
+                      setState(() => on ? notes.add(n) : notes.remove(n));
+                      _save();
+                    },
+                  ),
+              ],
+            ),
+          ],
+        ),
+        bottomNavigationBar: Footer(
+          children: [BigButton('تأكيد الاستلام', icon: Icons.check, onPressed: _finish)],
+        ),
       ),
     );
   }
@@ -316,7 +391,9 @@ class _ReceiveScreenState extends State<ReceiveScreen> {
   Widget _lineCard(int pid, bool flash) {
     final p = products[pid];
     if (p == null) {
-      return const CardBox(child: Text('صنف غير موجود على الجهاز. اعمل مزامنة.', style: TextStyle(fontSize: 18, color: cRed)));
+      return const CardBox(
+        child: Text('صنف غير موجود على الجهاز. اعمل مزامنة.', style: TextStyle(fontSize: 18, color: cRed)),
+      );
     }
     final l = _line(pid);
     final x = recv[pid];
@@ -324,25 +401,39 @@ class _ReceiveScreenState extends State<ReceiveScreen> {
     return CardBox(
       border: flash ? cGreen : (s?.$2 ?? cLine),
       color: flash ? const Color(0xFFE9F7EE) : null,
-      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          Expanded(child: Text(p.name, style: const TextStyle(fontSize: 21, fontWeight: FontWeight.w800))),
-          s == null ? const Pill('لم يراجع') : Pill(s.$1, fg: s.$2, bg: s.$3),
-        ]),
-        if (l != null)
-          Text('المطلوب: ${qtyText(l.ordered, l.mode)}${l.mode == 'carton' ? ' (${qty(l.ordered * p.carton, 'piece')} حبة)' : ''}',
-              style: const TextStyle(fontSize: 18)),
-        if (x != null) Text('المستلم: ${qtyText(x.qty, x.mode)}', style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w800)),
-        const SizedBox(height: 10),
-        if (x != null)
-          BigButton.light('تعديل الكمية', icon: Icons.edit_outlined, height: 58, onPressed: () => _qty(pid))
-        else
-          Row(children: [
-            Expanded(child: BigButton('وصل كامل', icon: Icons.check, height: 58, onPressed: l == null ? null : () => _full(l))),
-            const SizedBox(width: 8),
-            Expanded(child: BigButton.light('كمية مختلفة', height: 58, onPressed: () => _qty(pid))),
-          ]),
-      ]),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Expanded(
+                child: Text(p.name, style: const TextStyle(fontSize: 21, fontWeight: FontWeight.w800)),
+              ),
+              s == null ? const Pill('لم يراجع') : Pill(s.$1, fg: s.$2, bg: s.$3),
+            ],
+          ),
+          if (l != null)
+            Text(
+              'المطلوب: ${qtyText(l.ordered, l.mode)}${l.mode == 'carton' ? ' (${qty(l.ordered * p.carton, 'piece')} حبة)' : ''}',
+              style: const TextStyle(fontSize: 18),
+            ),
+          if (x != null) Text('المستلم: ${qtyText(x.qty, x.mode)}', style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w800)),
+          const SizedBox(height: 10),
+          if (x != null)
+            BigButton.light('تعديل الكمية', icon: Icons.edit_outlined, height: 58, onPressed: () => _qty(pid))
+          else
+            Row(
+              children: [
+                Expanded(
+                  child: BigButton('وصل كامل', icon: Icons.check, height: 58, onPressed: l == null ? null : () => _full(l)),
+                ),
+                const SizedBox(width: 8),
+                Expanded(child: BigButton.light('كمية مختلفة', height: 58, onPressed: () => _qty(pid))),
+              ],
+            ),
+        ],
+      ),
     );
   }
 }

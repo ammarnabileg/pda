@@ -36,66 +36,94 @@ class _LoginScreenState extends State<LoginScreen> {
     return Scaffold(
       appBar: AppBar(
         automaticallyImplyLeading: false,
-        title: Row(children: [
-          const Icon(Icons.diamond_outlined, size: 30),
-          const SizedBox(width: 8),
-          const Expanded(child: Text('تموين', style: TextStyle(fontSize: 26, fontWeight: FontWeight.w800))),
-          Text(app.deviceName ?? '', style: const TextStyle(fontSize: 16)),
-        ]),
+        title: Row(
+          children: [
+            const Icon(Icons.diamond_outlined, size: 30),
+            const SizedBox(width: 8),
+            const Expanded(
+              child: Text('تموين', style: TextStyle(fontSize: 26, fontWeight: FontWeight.w800)),
+            ),
+            Text(app.deviceName ?? '', style: const TextStyle(fontSize: 16)),
+          ],
+        ),
       ),
       body: _staff == null
           ? const Center(child: CircularProgressIndicator())
           : _staff!.isEmpty
-              ? Padding(
-                  padding: const EdgeInsets.all(16),
-                  child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [
-                    const Text('مفيش موظفين على الجهاز لسه.', style: TextStyle(fontSize: 22, fontWeight: FontWeight.w800)),
-                    const SizedBox(height: 6),
-                    const Text('أضف الموظفين من لوحة التحكم، وبعدين اضغط «تحديث».',
-                        textAlign: TextAlign.center, style: TextStyle(fontSize: 18, color: cMuted)),
-                    const SizedBox(height: 16),
-                    BigButton('تحديث', icon: Icons.sync, onPressed: () async {
+          ? Padding(
+              padding: const EdgeInsets.all(16),
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  const Text('مفيش موظفين على الجهاز لسه.', style: TextStyle(fontSize: 22, fontWeight: FontWeight.w800)),
+                  const SizedBox(height: 6),
+                  const Text(
+                    'أضف الموظفين من لوحة التحكم، وبعدين اضغط «تحديث».',
+                    textAlign: TextAlign.center,
+                    style: TextStyle(fontSize: 18, color: cMuted),
+                  ),
+                  const SizedBox(height: 16),
+                  BigButton(
+                    'تحديث',
+                    icon: Icons.sync,
+                    onPressed: () async {
                       await app.sync(full: true);
                       _load();
-                    }),
-                  ]),
-                )
-              : RefreshIndicator(
-                  onRefresh: () async {
-                    await app.sync(full: true);
-                    await _load();
-                  },
-                  child: ListView(padding: const EdgeInsets.all(12), children: [
-                    const Padding(
-                      padding: EdgeInsets.fromLTRB(4, 4, 4, 12),
-                      child: Text('اضغط على اسمك', style: TextStyle(fontSize: 24, fontWeight: FontWeight.w800)),
-                    ),
-                    for (final e in _staff!)
-                      Padding(
-                        padding: const EdgeInsets.only(bottom: 10),
-                        child: Material(
-                          color: Colors.white,
-                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16), side: const BorderSide(color: cLine, width: 2)),
-                          child: InkWell(
-                            borderRadius: BorderRadius.circular(16),
-                            onTap: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => PinScreen(employee: e))),
-                            child: Padding(
-                              padding: const EdgeInsets.all(16),
-                              child: Row(children: [
+                    },
+                  ),
+                ],
+              ),
+            )
+          : RefreshIndicator(
+              onRefresh: () async {
+                await app.sync(full: true);
+                await _load();
+              },
+              child: ListView(
+                padding: const EdgeInsets.all(12),
+                children: [
+                  const Padding(
+                    padding: EdgeInsets.fromLTRB(4, 4, 4, 12),
+                    child: Text('اضغط على اسمك', style: TextStyle(fontSize: 24, fontWeight: FontWeight.w800)),
+                  ),
+                  for (final e in _staff!)
+                    Padding(
+                      padding: const EdgeInsets.only(bottom: 10),
+                      child: Material(
+                        color: Colors.white,
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(16),
+                          side: const BorderSide(color: cLine, width: 2),
+                        ),
+                        child: InkWell(
+                          borderRadius: BorderRadius.circular(16),
+                          onTap: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => PinScreen(employee: e))),
+                          child: Padding(
+                            padding: const EdgeInsets.all(16),
+                            child: Row(
+                              children: [
                                 CircleAvatar(
-                                    radius: 26,
-                                    backgroundColor: cGreen2,
-                                    child: Text(e.name.characters.first, style: const TextStyle(fontSize: 24, color: cGreen, fontWeight: FontWeight.w800))),
+                                  radius: 26,
+                                  backgroundColor: cGreen2,
+                                  child: Text(
+                                    e.name.characters.first,
+                                    style: const TextStyle(fontSize: 24, color: cGreen, fontWeight: FontWeight.w800),
+                                  ),
+                                ),
                                 const SizedBox(width: 14),
-                                Expanded(child: Text(e.name, style: const TextStyle(fontSize: 24, fontWeight: FontWeight.w800))),
+                                Expanded(
+                                  child: Text(e.name, style: const TextStyle(fontSize: 24, fontWeight: FontWeight.w800)),
+                                ),
                                 Text(Employee.roleNames[e.role] ?? '', style: const TextStyle(fontSize: 17, color: cMuted)),
-                              ]),
+                              ],
                             ),
                           ),
                         ),
                       ),
-                  ]),
-                ),
+                    ),
+                ],
+              ),
+            ),
     );
   }
 }
@@ -183,58 +211,76 @@ class _PinScreenState extends State<PinScreen> {
       appBar: topBar(context, widget.employee.name),
       body: Padding(
         padding: const EdgeInsets.all(16),
-        child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-          const Text('اكتب رقمك السري', textAlign: TextAlign.center, style: TextStyle(fontSize: 24, fontWeight: FontWeight.w800)),
-          const SizedBox(height: 16),
-          Row(
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            const Text(
+              'اكتب رقمك السري',
+              textAlign: TextAlign.center,
+              style: TextStyle(fontSize: 24, fontWeight: FontWeight.w800),
+            ),
+            const SizedBox(height: 16),
+            Row(
               mainAxisAlignment: MainAxisAlignment.center,
               children: List.generate(
-                  6,
-                  (i) => Container(
-                        width: 22,
-                        height: 22,
-                        margin: const EdgeInsets.symmetric(horizontal: 8),
-                        decoration: BoxDecoration(
-                            shape: BoxShape.circle,
-                            color: i < pin.length ? cHead : Colors.white,
-                            border: Border.all(color: i < 4 || i < pin.length ? cHead : cLine, width: 2)),
-                      ))),
-          SizedBox(
-              height: 44,
-              child: Center(
-                  child: busy
-                      ? const SizedBox(width: 26, height: 26, child: CircularProgressIndicator(strokeWidth: 3))
-                      : Text(err ?? '', style: const TextStyle(color: cRed, fontSize: 20, fontWeight: FontWeight.w800)))),
-          Expanded(
-            child: Directionality(
-              textDirection: TextDirection.ltr,
-              child: GridView.count(
-                crossAxisCount: 3,
-                mainAxisSpacing: 10,
-                crossAxisSpacing: 10,
-                childAspectRatio: 1.6,
-                physics: const NeverScrollableScrollPhysics(),
-                children: keys
-                    .map((k) => k.isEmpty
-                        ? const SizedBox()
-                        : Material(
-                            color: cGray2,
-                            borderRadius: BorderRadius.circular(14),
-                            child: InkWell(
-                              borderRadius: BorderRadius.circular(14),
-                              onTap: () => _press(k),
-                              child: Center(
-                                  child: k == 'back'
-                                      ? const Icon(Icons.backspace_outlined, size: 30)
-                                      : Text(k, style: const TextStyle(fontSize: 34, fontWeight: FontWeight.w800))),
-                            ),
-                          ))
-                    .toList(),
+                6,
+                (i) => Container(
+                  width: 22,
+                  height: 22,
+                  margin: const EdgeInsets.symmetric(horizontal: 8),
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    color: i < pin.length ? cHead : Colors.white,
+                    border: Border.all(color: i < 4 || i < pin.length ? cHead : cLine, width: 2),
+                  ),
+                ),
               ),
             ),
-          ),
-          BigButton('دخول', icon: Icons.login, onPressed: busy ? null : _submit),
-        ]),
+            SizedBox(
+              height: 44,
+              child: Center(
+                child: busy
+                    ? const SizedBox(width: 26, height: 26, child: CircularProgressIndicator(strokeWidth: 3))
+                    : Text(
+                        err ?? '',
+                        style: const TextStyle(color: cRed, fontSize: 20, fontWeight: FontWeight.w800),
+                      ),
+              ),
+            ),
+            Expanded(
+              child: Directionality(
+                textDirection: TextDirection.ltr,
+                child: GridView.count(
+                  crossAxisCount: 3,
+                  mainAxisSpacing: 10,
+                  crossAxisSpacing: 10,
+                  childAspectRatio: 1.6,
+                  physics: const NeverScrollableScrollPhysics(),
+                  children: keys
+                      .map(
+                        (k) => k.isEmpty
+                            ? const SizedBox()
+                            : Material(
+                                color: cGray2,
+                                borderRadius: BorderRadius.circular(14),
+                                child: InkWell(
+                                  borderRadius: BorderRadius.circular(14),
+                                  onTap: () => _press(k),
+                                  child: Center(
+                                    child: k == 'back'
+                                        ? const Icon(Icons.backspace_outlined, size: 30)
+                                        : Text(k, style: const TextStyle(fontSize: 34, fontWeight: FontWeight.w800)),
+                                  ),
+                                ),
+                              ),
+                      )
+                      .toList(),
+                ),
+              ),
+            ),
+            BigButton('دخول', icon: Icons.login, onPressed: busy ? null : _submit),
+          ],
+        ),
       ),
     );
   }

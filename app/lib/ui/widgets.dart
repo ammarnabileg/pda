@@ -626,39 +626,67 @@ class _NumberPadState extends State<_NumberPad> {
   @override
   void dispose() {
     HardwareKeyboard.instance.removeHandler(_key);
+    _field.dispose();
+    _focus.dispose();
     super.dispose();
   }
 
-  // Hardware keypads on PDAs can type straight into the pad.
-  bool _key(KeyEvent e) {
-    if (e is! KeyDownEvent) return false;
-    final ch = e.character;
+  final _field = TextEditingController();
+  final _focus = FocusNode(debugLabel: 'pad-scanner');
+
+  void _char(String ch) {
     final now = DateTime.now();
     if (now.difference(_kbLast) > const Duration(milliseconds: 1500)) _kb.clear();
     _kbLast = now;
-    if (e.logicalKey == LogicalKeyboardKey.enter || e.logicalKey == LogicalKeyboardKey.numpadEnter) {
-      final typed = _kb.toString();
-      _kb.clear();
-      if (!widget.barcode && typed.length >= 6) {
-        // That was the scanner, not someone typing a quantity.
-        Navigator.pop(context, PadResult(0, mode, scanned: typed));
-      } else if (widget.barcode && typed.length >= 4) {
-        Navigator.pop(context, PadResult(0, typed));
-      } else {
-        _save();
-      }
+    _kb.write(ch);
+    if (RegExp(r'^[0-9.]$').hasMatch(ch)) _press(ch);
+  }
+
+  void _enter() {
+    final typed = _kb.toString();
+    _kb.clear();
+    if (!widget.barcode && typed.length >= 6) {
+      // That was the scanner, not someone typing a quantity.
+      Navigator.pop(context, PadResult(0, mode, scanned: typed));
+    } else if (widget.barcode && typed.length >= 4) {
+      Navigator.pop(context, PadResult(0, typed));
+    } else {
+      _save();
+    }
+  }
+
+  // The built-in scanner (key events) and hardware keypads type straight into the pad.
+  bool _key(KeyEvent e) {
+    if (e is! KeyDownEvent) return false;
+    if (e.logicalKey == LogicalKeyboardKey.enter ||
+        e.logicalKey == LogicalKeyboardKey.numpadEnter ||
+        e.logicalKey == LogicalKeyboardKey.tab) {
+      _enter();
       return true;
     }
     if (e.logicalKey == LogicalKeyboardKey.backspace) {
       _press('back');
       return true;
     }
+    final ch = e.character;
     if (ch != null && RegExp(r'^[0-9A-Za-z.\-]$').hasMatch(ch)) {
-      _kb.write(ch);
-      if (RegExp(r'^[0-9.]$').hasMatch(ch)) _press(ch);
+      _char(ch);
       return true;
     }
     return false;
+  }
+
+  // Scanners that inject text instead of key events.
+  void _onField(String text) {
+    if (text.isEmpty) return;
+    _field.clear();
+    for (final ch in text.split('')) {
+      if (ch == '\n' || ch == '\r' || ch == '\t') {
+        _enter();
+        return;
+      }
+      if (RegExp(r'^[0-9A-Za-z.\-]$').hasMatch(ch)) _char(ch);
+    }
   }
 
   void _press(String k) {
@@ -697,6 +725,36 @@ class _NumberPadState extends State<_NumberPad> {
 
   @override
   Widget build(BuildContext context) {
+    return Stack(
+      children: [
+        Positioned(
+          left: 0,
+          top: 0,
+          width: 1,
+          height: 1,
+          child: Opacity(
+            opacity: 0,
+            child: ExcludeSemantics(
+              child: TextField(
+                key: const Key('pad-scanner-input'),
+                controller: _field,
+                focusNode: _focus,
+                autofocus: true,
+                keyboardType: TextInputType.none,
+                showCursor: false,
+                enableInteractiveSelection: false,
+                onChanged: _onField,
+                onSubmitted: (_) => _enter(),
+              ),
+            ),
+          ),
+        ),
+        _body(context),
+      ],
+    );
+  }
+
+  Widget _body(BuildContext context) {
     final kg = mode == 'kg';
     final keys = ['1', '2', '3', '4', '5', '6', '7', '8', '9', widget.barcode ? 'clear' : (kg ? '.' : 'clear'), '0', 'back'];
     return Column(
@@ -877,6 +935,21 @@ class _SearchSheetState extends State<_SearchSheet> {
             onChanged: (q) {
               _debounce?.cancel();
               _debounce = Timer(const Duration(milliseconds: 250), () => _run(q));
+            },
+            // Scanning while this is open types the barcode here: pick that product directly.
+            onSubmitted: (q) async {
+              q = q.trim();
+              if (q.isEmpty) return;
+              final r = await widget.search(q);
+              final hit = r.where((p) => p.barcode == q || p.barcode == '0$q' || '0${p.barcode}' == q).toList();
+              if (!context.mounted) return;
+              if (hit.length == 1) {
+                Navigator.pop(context, hit.first);
+              } else if (r.length == 1) {
+                Navigator.pop(context, r.first);
+              } else {
+                setState(() => items = r);
+              }
             },
           ),
           const SizedBox(height: 8),

@@ -26,10 +26,7 @@ class Api {
     return u.hasPort ? '${u.scheme}://${u.host}:${u.port}' : '${u.scheme}://${u.host}:9001';
   }
 
-  Map<String, String> get _headers => {
-        'Content-Type': 'application/json',
-        if (token != null) 'Authorization': 'Bearer $token',
-      };
+  Map<String, String> get _headers => {'Content-Type': 'application/json', if (token != null) 'Authorization': 'Bearer $token'};
 
   Future<Map<String, dynamic>> _send(Future<http.Response> Function() call, {Duration timeout = const Duration(seconds: 15)}) async {
     http.Response r;
@@ -63,16 +60,17 @@ class Api {
     if (r['app'] != 'tamween') throw ApiException('not_tamween');
   }
 
-  Future<Map<String, dynamic>> pair(String code, String appVersion) => _send(() => _client.post(
-      Uri.parse('$baseUrl/api/v1/pair'),
-      headers: _headers,
-      body: jsonEncode({'code': code, 'app_version': appVersion})));
+  Future<Map<String, dynamic>> pair(String code, String appVersion) => _send(
+    () => _client.post(Uri.parse('$baseUrl/api/v1/pair'), headers: _headers, body: jsonEncode({'code': code, 'app_version': appVersion})),
+  );
 
-  Future<Map<String, dynamic>> pull(int since) =>
-      _send(() => _client.get(Uri.parse('$baseUrl/api/v1/sync/pull?since=$since'), headers: _headers),
-          timeout: const Duration(seconds: 60));
+  Future<Map<String, dynamic>> pull(int since) => _send(
+    () => _client.get(Uri.parse('$baseUrl/api/v1/sync/pull?since=$since'), headers: _headers),
+    timeout: const Duration(seconds: 60),
+  );
 
   Future<Map<String, dynamic>> push(Map<String, Object?> payload) => _send(
-      () => _client.post(Uri.parse('$baseUrl/api/v1/sync/push'), headers: _headers, body: jsonEncode(payload)),
-      timeout: const Duration(seconds: 60));
+    () => _client.post(Uri.parse('$baseUrl/api/v1/sync/push'), headers: _headers, body: jsonEncode(payload)),
+    timeout: const Duration(seconds: 60),
+  );
 }
