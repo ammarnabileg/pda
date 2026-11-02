@@ -7,12 +7,19 @@ import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 import 'package:tamween_pda/data/app_state.dart';
 import 'package:tamween_pda/data/db.dart';
 import 'package:tamween_pda/main.dart';
+import 'package:tamween_pda/ui/widgets.dart';
 import 'package:tamween_pda/util/pin_hash.dart';
 
 const keys = {
-  '0': LogicalKeyboardKey.digit0, '1': LogicalKeyboardKey.digit1, '2': LogicalKeyboardKey.digit2,
-  '3': LogicalKeyboardKey.digit3, '4': LogicalKeyboardKey.digit4, '5': LogicalKeyboardKey.digit5,
-  '6': LogicalKeyboardKey.digit6, '7': LogicalKeyboardKey.digit7, '8': LogicalKeyboardKey.digit8,
+  '0': LogicalKeyboardKey.digit0,
+  '1': LogicalKeyboardKey.digit1,
+  '2': LogicalKeyboardKey.digit2,
+  '3': LogicalKeyboardKey.digit3,
+  '4': LogicalKeyboardKey.digit4,
+  '5': LogicalKeyboardKey.digit5,
+  '6': LogicalKeyboardKey.digit6,
+  '7': LogicalKeyboardKey.digit7,
+  '8': LogicalKeyboardKey.digit8,
   '9': LogicalKeyboardKey.digit9,
 };
 
@@ -26,16 +33,53 @@ Future<LocalDb> seededDb() async {
     'version': 10,
     'full': true,
     'products': [
-      {'id': 1, 'barcode': '6281000123456', 'name': 'أرز بسمتي ٥ كجم', 'unit': 'piece', 'price': '2.450', 'carton': 6, 'stock': '48', 'active': true},
-      {'id': 2, 'barcode': '2100000012345', 'name': 'سكر أبيض (بالكيلو)', 'unit': 'kg', 'price': '0.350', 'carton': 0, 'stock': '125', 'active': true},
+      {
+        'id': 1,
+        'barcode': '6281000123456',
+        'name': 'أرز بسمتي ٥ كجم',
+        'unit': 'piece',
+        'price': '2.450',
+        'carton': 6,
+        'stock': '48',
+        'active': true,
+      },
+      {
+        'id': 3,
+        'barcode': '6281000999999',
+        'name': 'زيت زيتون إسباني بكر ممتاز معصور على البارد عبوة زجاجية ٧٥٠ مل',
+        'unit': 'piece',
+        'price': '12.750',
+        'cost': '10.100',
+        'carton': 12,
+        'stock': '1250',
+        'active': true,
+      },
+      {
+        'id': 2,
+        'barcode': '2100000012345',
+        'name': 'سكر أبيض (بالكيلو)',
+        'unit': 'kg',
+        'price': '0.350',
+        'carton': 0,
+        'stock': '125',
+        'active': true,
+      },
     ],
     'employees': [
       {'id': 1, 'name': 'أحمد', 'role': 'cashier', 'pin_salt': salt, 'pin_hash': hashPin('2222', salt), 'active': true},
       {'id': 2, 'name': 'محمود', 'role': 'storekeeper', 'pin_salt': salt, 'pin_hash': hashPin('3333', salt), 'active': true},
     ],
     'receipts': [
-      {'id': 7, 'supplier': 'شركة المواد الغذائية', 'status': 'open', 'note': '', 'created_at': '2026-11-01T10:00:00Z',
-        'lines': [{'product_id': 1, 'mode': 'carton', 'ordered': '10'}]},
+      {
+        'id': 7,
+        'supplier': 'شركة المواد الغذائية',
+        'status': 'open',
+        'note': '',
+        'created_at': '2026-11-01T10:00:00Z',
+        'lines': [
+          {'product_id': 1, 'mode': 'carton', 'ordered': '10'},
+        ],
+      },
     ],
   });
   return db;
@@ -119,7 +163,7 @@ void main() {
     expect(find.text('أرز بسمتي ٥ كجم'), findsOneWidget);
     await scan(tester, '6281000123456');
     await settle(tester);
-    expect(find.text('2 حبة'), findsOneWidget);
+    expect(find.widgetWithText(QtyStepper, '2 حبة'), findsOneWidget);
     expect(find.text('4.900'), findsWidgets);
 
     // Weighed item opens the pad; type 1.25 on it.
@@ -137,7 +181,7 @@ void main() {
     // Unknown barcode shows the red message.
     await scan(tester, '9999999');
     await settle(tester);
-    expect(find.text('الصنف غير مسجل'), findsOneWidget);
+    expect(find.text('الصنف غير مسجل على الجهاز'), findsOneWidget);
     await tester.tap(find.text('حسناً'));
     await tester.pumpAndSettle();
 
@@ -145,7 +189,8 @@ void main() {
     await tester.pumpAndSettle();
     await tester.tap(find.text('تم الدفع'));
     await settle(tester, 800);
-    expect(find.text('تم البيع'), findsOneWidget);
+    expect(find.text('تم تسجيل البيع'), findsOneWidget);
+    expect(find.text(W.savedLocal), findsOneWidget, reason: 'offline: saved on the device, not claimed as sent');
     final out = await tester.runAsync(() => app.db.pendingOutbox());
     expect(out!.length, 1);
     expect(out.first['kind'], 'sales');
@@ -172,7 +217,7 @@ void main() {
     await tester.tap(find.text('5').last);
     await tester.tap(find.text('حفظ'));
     await settle(tester);
-    expect(find.text('العدد: 17 حبة (2 كرتون و 5 حبة)'), findsOneWidget);
+    expect(find.textContaining('17 حبة (2 كرتون و 5 حبة)', findRichText: true), findsOneWidget);
     await tester.tap(find.textContaining('إنهاء الجرد'));
     await tester.pumpAndSettle();
     await tester.tap(find.text('نعم، إنهاء'));
@@ -181,13 +226,13 @@ void main() {
     await tester.tap(find.text('الرئيسية'));
     await settle(tester);
 
-    await tester.tap(find.text('استلام بضاعة'));
+    await tester.tap(find.text('استلام'));
     await settle(tester);
     await tester.tap(find.text('شركة المواد الغذائية'));
     await settle(tester);
     await tester.tap(find.text('تأكيد الاستلام'));
     await settle(tester);
-    expect(find.text('باقي 1 أصناف لم تراجع'), findsOneWidget);
+    expect(find.text('باقي 1 أصناف ماتراجعتش'), findsOneWidget);
     await tester.tap(find.text('حسناً'));
     await tester.pumpAndSettle();
     await scan(tester, '6281000123456');
@@ -196,10 +241,14 @@ void main() {
     await tester.tap(find.text('9').last);
     await tester.tap(find.text('حفظ'));
     await settle(tester);
+    // The screen moved to the "not reviewed" filter, so the reviewed item left the list.
+    expect(find.text('ناقص 1 كرتون'), findsNothing);
+    await tester.tap(find.textContaining('فيه فرق'));
+    await settle(tester);
     expect(find.text('ناقص 1 كرتون'), findsOneWidget);
     await tester.tap(find.text('تأكيد الاستلام'));
     await tester.pumpAndSettle();
-    expect(find.textContaining('فيه فروقات في 1 صنف'), findsOneWidget);
+    expect(find.textContaining('فيه فروقات في 1 من 1 صنف'), findsOneWidget);
     await tester.tap(find.text('نعم، تأكيد'));
     await settle(tester, 800);
     final kinds = (await tester.runAsync(() => app.db.pendingOutbox()))!.map((r) => r['kind']).toList();
@@ -223,7 +272,7 @@ void main() {
     await tester.testTextInput.receiveAction(TextInputAction.done);
     await settle(tester);
     expect(find.text('أرز بسمتي ٥ كجم'), findsOneWidget);
-    expect(find.text('1 حبة'), findsOneWidget);
+    expect(find.widgetWithText(QtyStepper, '1 حبة'), findsOneWidget);
 
     // Mode 2: key events at scanner speed with no Enter at the end.
     for (final ch in '6281000123456'.split('')) {
@@ -231,7 +280,7 @@ void main() {
     }
     await tester.pump(const Duration(milliseconds: 200));
     await settle(tester);
-    expect(find.text('2 حبة'), findsOneWidget);
+    expect(find.widgetWithText(QtyStepper, '2 حبة'), findsOneWidget);
 
     // Slow typing (a person on a hardware keypad) is not taken as a scan without Enter.
     // The app measures real time between characters, so wait in real time here.
@@ -241,7 +290,7 @@ void main() {
     }
     await tester.pump(const Duration(milliseconds: 300));
     await settle(tester);
-    expect(find.text('الصنف غير مسجل'), findsNothing);
+    expect(find.text('الصنف غير مسجل على الجهاز'), findsNothing);
     await tester.pump(const Duration(seconds: 30));
   });
 
@@ -250,18 +299,18 @@ void main() {
     await login(tester, 'محمود', '3333');
 
     // Receipt list: scanning opens the voucher with that item and asks its quantity.
-    await tester.tap(find.text('استلام بضاعة'));
+    await tester.tap(find.text('استلام'));
     await settle(tester);
     await scan(tester, '6281000123456');
-    await waitFor(tester, find.textContaining('المطلوب: 10 كرتون. اكتب اللي وصل'));
-    expect(find.textContaining('المطلوب: 10 كرتون. اكتب اللي وصل'), findsOneWidget);
+    await waitFor(tester, find.textContaining('المطلوب: 10 كرتون — اكتب اللي وصل'));
+    expect(find.textContaining('المطلوب: 10 كرتون — اكتب اللي وصل'), findsOneWidget);
 
     // Number pad, text-injecting scanner: a new scan closes the pad and is handled as a scan.
     tester.testTextInput.enterText('6281000123456');
     await tester.testTextInput.receiveAction(TextInputAction.done);
     await tester.pump(const Duration(milliseconds: 500));
-    await waitFor(tester, find.textContaining('المطلوب: 10 كرتون. اكتب اللي وصل'));
-    expect(find.textContaining('المطلوب: 10 كرتون. اكتب اللي وصل'), findsOneWidget, reason: 'reopened for the scanned item');
+    await waitFor(tester, find.textContaining('المطلوب: 10 كرتون — اكتب اللي وصل'));
+    expect(find.textContaining('المطلوب: 10 كرتون — اكتب اللي وصل'), findsOneWidget, reason: 'reopened for the scanned item');
     await tester.pump(const Duration(seconds: 30));
   });
 
@@ -278,6 +327,46 @@ void main() {
     expect(find.text('سكر أبيض (بالكيلو)'), findsWidgets);
     expect(find.text('اكتب العدد الموجود على الرف'), findsOneWidget);
     expect(app.employee?.name, 'محمود');
+    await tester.pump(const Duration(seconds: 30));
+  });
+
+  testWidgets('large Android font and a very long name still fit on a 360 x 640 screen', (tester) async {
+    tester.platformDispatcher.textScaleFactorTestValue = 1.3;
+    addTearDown(tester.platformDispatcher.clearTextScaleFactorTestValue);
+    await startApp(tester);
+    await login(tester, 'أحمد', '2222');
+    await tester.tap(find.text('بيع'));
+    await settle(tester);
+    for (var i = 0; i < 3; i++) {
+      await scan(tester, '6281000999999');
+      await settle(tester);
+    }
+    await scan(tester, '6281000123456');
+    await settle(tester);
+    expect(find.widgetWithText(QtyStepper, '3 حبة'), findsOneWidget);
+    expect(find.text('38.250'), findsOneWidget); // 3 x 12.750, kept whole next to the long name
+    // Details sheet shows the purchase price.
+    await tester.tap(find.textContaining('زيت زيتون'));
+    await settle(tester);
+    expect(find.text('12.750 / 10.100 د.ك للحبة'), findsOneWidget);
+    await tester.tap(find.text('تعديل الكمية'));
+    await settle(tester);
+    await tester.tap(find.text('كرتون'));
+    await tester.pump();
+    expect(find.text('الكرتون = 12 حبة'), findsOneWidget);
+    await tester.tap(find.text('إلغاء'));
+    await settle(tester);
+    // Other screens at this size: any overflow fails the test.
+    await tester.tap(find.text('رجوع'));
+    await settle(tester);
+    await tester.tap(find.text('سعر صنف'));
+    await settle(tester);
+    await scan(tester, '6281000999999');
+    await settle(tester);
+    expect(find.text('سعر الشراء'), findsOneWidget);
+    await tester.tap(find.byType(SyncIndicator).first);
+    await settle(tester);
+    expect(find.text('مزامنة الآن'), findsOneWidget);
     await tester.pump(const Duration(seconds: 30));
   });
 }

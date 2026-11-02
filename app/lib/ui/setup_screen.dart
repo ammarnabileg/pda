@@ -70,10 +70,10 @@ class _SetupScreenState extends State<SetupScreen> {
           const SizedBox(height: 6),
           TextField(
             controller: _server,
-            keyboardType: const TextInputType.numberWithOptions(decimal: true),
+            keyboardType: TextInputType.url, // IP, IP:port, or a name / https address
             textDirection: TextDirection.ltr,
             style: const TextStyle(fontSize: 22),
-            decoration: _dec('مثال: 192.168.1.20'),
+            decoration: _dec('مثال: 192.168.1.20 أو 192.168.1.20:9001'),
           ),
           const SizedBox(height: 14),
           const Text('كود الربط', style: TextStyle(fontSize: 19, fontWeight: FontWeight.w800)),

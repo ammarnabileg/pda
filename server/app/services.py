@@ -45,7 +45,7 @@ class SyncError(Exception):
 
 def product_dict(p: Product):
     return {"id": p.id, "barcode": p.barcode, "name": p.name, "unit": p.unit,
-            "price": str(p.price), "carton": p.carton, "stock": str(p.stock), "active": p.active}
+            "price": str(p.price), "cost": str(p.cost), "carton": p.carton, "stock": str(p.stock), "active": p.active}
 
 
 def employee_dict(e: Employee):

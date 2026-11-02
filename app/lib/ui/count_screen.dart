@@ -10,8 +10,11 @@ import 'widgets.dart';
 class _CountLine {
   final int productId;
   int base; // thousandths of the base unit
-  _CountLine(this.productId, this.base);
+  int scans; // how many times it was counted (added to)
+  _CountLine(this.productId, this.base, [this.scans = 1]);
 }
+
+enum _Sort { recent, name }
 
 /// Blind count: staff see what they counted, not what the system expects.
 /// Differences are reviewed and approved by a supervisor in the dashboard.
@@ -26,7 +29,10 @@ class _CountScreenState extends State<CountScreen> {
   final products = <int, Product>{};
   String? id, startedAt;
   bool loaded = false;
-  int? flashId;
+  int? lastId;
+  String? lastNote;
+  String filter = '';
+  _Sort sort = _Sort.recent;
 
   @override
   void initState() {
@@ -41,7 +47,7 @@ class _CountScreenState extends State<CountScreen> {
       id = d['id'] as String?;
       startedAt = d['started_at'] as String?;
       for (final j in d['lines'] as List) {
-        lines.add(_CountLine(j['p'] as int, j['b'] as int));
+        lines.add(_CountLine(j['p'] as int, j['b'] as int, (j['n'] as int?) ?? 1));
       }
     }
     products.addAll(await db.productsByIds(lines.map((l) => l.productId)));
@@ -60,7 +66,7 @@ class _CountScreenState extends State<CountScreen> {
               'id': id,
               'started_at': startedAt,
               'lines': [
-                for (final l in lines) {'p': l.productId, 'b': l.base},
+                for (final l in lines) {'p': l.productId, 'b': l.base, 'n': l.scans},
               ],
             },
     );
@@ -74,24 +80,31 @@ class _CountScreenState extends State<CountScreen> {
     final r = await numberPad(
       context,
       title: p.name,
-      hint: prev > 0 ? 'معدود قبل كده: ${p.baseText(prev)}\nالعدد الجديد هيتجمع عليه' : 'اكتب العدد الموجود على الرف',
+      hint: prev > 0 ? 'معدود قبل كده: ${p.baseText(prev)} — العدد الجديد هيتجمع عليه' : 'اكتب العدد الموجود على الرف',
       modes: p.modes,
+      carton: p.carton,
+      preview: prev > 0
+          ? (q, m) => 'المجموع هيبقى: ${p.baseText(prev + p.toBase(q, m))}'
+          : (q, m) => m == 'carton' ? '= ${p.baseText(p.toBase(q, m))}' : null,
     );
     if (r?.scanned != null) return _onScan(r!.scanned!);
     if (r == null || !mounted) return;
     final add = p.toBase(r.qty, r.mode);
     _CountLine line;
     if (i >= 0) {
-      line = lines.removeAt(i)..base += add;
+      line = lines.removeAt(i)
+        ..base += add
+        ..scans += 1;
     } else {
       line = _CountLine(p.id, add);
     }
     setState(() {
       lines.add(line);
-      flashId = p.id;
+      lastId = p.id;
+      lastNote = i >= 0 ? '+${p.baseText(add)}' : null;
+      filter = '';
     });
     _save();
-    toast(context, 'تم الحفظ. المجموع: ${p.baseText(line.base)}');
   }
 
   Future<void> _onScan(String code) async => _onProduct(await findScanned(context, AppScope.read(context), code));
@@ -101,10 +114,12 @@ class _CountScreenState extends State<CountScreen> {
     final r = await numberPad(
       context,
       title: p.name,
-      hint: 'العدد الجديد هيحل محل القديم',
+      hint: 'العدد الحالي: ${p.baseText(l.base)} — العدد الجديد هيحل محله',
       modes: p.modes,
       mode: p.isKg ? 'kg' : 'piece',
       initial: l.base,
+      carton: p.carton,
+      preview: (q, m) => 'العدد هيبقى: ${p.baseText(p.toBase(q, m))}',
     );
     if (r?.scanned != null) return _onScan(r!.scanned!);
     if (r == null) return;
@@ -127,18 +142,42 @@ class _CountScreenState extends State<CountScreen> {
     );
   }
 
+  Future<void> _actions(_CountLine l) async {
+    final p = products[l.productId]!;
+    final a = await showAppSheet<String>(
+      context,
+      Builder(
+        builder: (ctx) => Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Text(p.name, style: T.heading),
+            Text('المعدود: ${p.baseText(l.base)}${l.scans > 1 ? ' (على ${l.scans} مرات)' : ''}', style: T.sub),
+            const SizedBox(height: S.m),
+            BigButton.light('تعديل العدد', icon: Icons.edit_outlined, onPressed: () => Navigator.pop(ctx, 'edit')),
+            const SizedBox(height: S.s),
+            BigButton.danger('حذف من الجرد', icon: Icons.delete_outline, onPressed: () => Navigator.pop(ctx, 'delete')),
+          ],
+        ),
+      ),
+    );
+    if (a == 'edit') await _edit(l);
+    if (a == 'delete') _delete(l);
+  }
+
   Future<void> _finish() async {
     final ok = await confirmSheet(
       context,
       title: 'إنهاء الجرد؟',
-      body: Text('تم عدّ ${lines.length} صنف.\nبعد الإنهاء الجرد هيتبعت للمشرف ومش هتقدر تعدّل.'),
+      body: Text('تم عدّ ${lines.length} صنف.\nبعد الإنهاء الجرد بيتقفل، ومش هتقدر تعدّل فيه من الجهاز.'),
       yes: 'نعم، إنهاء',
     );
     if (!ok || !mounted) return;
     final app = AppScope.read(context);
     await _save();
-    await app.db.enqueue('counts', id!, {
-      'id': id,
+    final countId = id!;
+    await app.db.enqueue('counts', countId, {
+      'id': countId,
       'employee_id': app.employee?.id,
       'started_at': startedAt,
       'finished_at': DateTime.now().toUtc().toIso8601String(),
@@ -153,7 +192,11 @@ class _CountScreenState extends State<CountScreen> {
     await app.db.set('draft_count', null);
     await app.recordSaved();
     if (!mounted) return;
-    Navigator.of(context).pushReplacement(MaterialPageRoute(builder: (_) => _CountDone(count: n)));
+    Navigator.of(context).pushReplacement(
+      MaterialPageRoute(
+        builder: (_) => _CountDone(count: n, id: countId),
+      ),
+    );
   }
 
   @override
@@ -161,96 +204,116 @@ class _CountScreenState extends State<CountScreen> {
     final app = AppScope.read(context);
     Future<void> type() async => _onProduct(await typeAndFind(context, app));
     Future<void> search() async => _onProduct(await searchAndPick(context, app));
-    final flash = flashId;
-    flashId = null;
-    return ScanListener(
+    var shown = lines.reversed.where((l) => filter.isEmpty || products[l.productId]!.name.contains(filter)).toList();
+    if (sort == _Sort.name) shown.sort((a, b) => products[a.productId]!.name.compareTo(products[b.productId]!.name));
+    return WorkScaffold(
+      title: 'جرد',
       onScan: _onScan,
-      child: Scaffold(
-        appBar: topBar(context, 'جرد'),
-        body: !loaded
-            ? const Center(child: CircularProgressIndicator())
-            : ListView(
-                padding: const EdgeInsets.all(12),
-                children: [
-                  if (lines.isEmpty)
-                    ScanPrompt(title: 'امسح باركود الصنف', sub: 'بعدها اكتب العدد الموجود على الرف', onType: type, onSearch: search)
-                  else
-                    ScanBar(text: 'امسح الصنف التالي', onType: type, onSearch: search),
-                  for (final l in lines.reversed)
-                    CardBox(
-                      border: l.productId == flash ? cGreen : cLine,
-                      color: l.productId == flash ? const Color(0xFFE9F7EE) : null,
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(products[l.productId]!.name, style: const TextStyle(fontSize: 21, fontWeight: FontWeight.w800)),
-                          const SizedBox(height: 4),
-                          Text(
-                            'العدد: ${products[l.productId]!.baseText(l.base)}',
-                            style: const TextStyle(fontSize: 23, fontWeight: FontWeight.w800),
+      body: !loaded
+          ? const Center(child: CircularProgressIndicator())
+          : ListView(
+              padding: const EdgeInsets.all(S.edge),
+              children: [
+                if (lines.isEmpty)
+                  ScanPrompt(title: 'امسح أول صنف لبدء الجرد', sub: 'بعدها اكتب العدد الموجود على الرف', onType: type, onSearch: search)
+                else ...[
+                  ScanBar(text: 'امسح الصنف التالي', onType: type, onSearch: search),
+                  Row(
+                    children: [
+                      Text('${lines.length} صنف معدود', style: T.subStrong),
+                      const Spacer(),
+                      TextButton.icon(
+                        onPressed: () => setState(() => sort = sort == _Sort.recent ? _Sort.name : _Sort.recent),
+                        icon: const Icon(Icons.swap_vert, size: 20),
+                        label: Text(sort == _Sort.recent ? 'الأحدث' : 'بالاسم', style: T.label),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: S.s),
+                  if (lines.length >= 8)
+                    Padding(
+                      padding: const EdgeInsets.only(bottom: S.s),
+                      child: TextField(
+                        onChanged: (v) => setState(() => filter = v.trim()),
+                        onTapOutside: (_) => FocusManager.instance.primaryFocus?.unfocus(),
+                        decoration: InputDecoration(
+                          isDense: true,
+                          prefixIcon: const Icon(Icons.search),
+                          hintText: 'دوّر في الجرد',
+                          filled: true,
+                          fillColor: cSurface,
+                          border: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(S.radius),
+                            borderSide: const BorderSide(color: cLine),
                           ),
-                          const SizedBox(height: 10),
-                          Row(
-                            children: [
-                              Expanded(
-                                child: BigButton.light('تعديل العدد', icon: Icons.edit_outlined, height: 58, onPressed: () => _edit(l)),
-                              ),
-                              const SizedBox(width: 8),
-                              SizedBox(
-                                width: 110,
-                                child: BigButton(
-                                  'حذف',
-                                  icon: Icons.delete_outline,
-                                  color: cRed2,
-                                  textColor: cRed,
-                                  height: 58,
-                                  onPressed: () => _delete(l),
-                                ),
-                              ),
-                            ],
-                          ),
-                        ],
+                        ),
                       ),
                     ),
                 ],
-              ),
-        bottomNavigationBar: Footer(
-          children: [BigButton('إنهاء الجرد (${lines.length} صنف)', icon: Icons.check, onPressed: lines.isEmpty ? null : _finish)],
+                for (final l in shown) _row(l),
+              ],
+            ),
+      footer: Footer(
+        children: [BigButton('إنهاء الجرد (${lines.length} صنف)', icon: Icons.check, onPressed: lines.isEmpty ? null : _finish)],
+      ),
+    );
+  }
+
+  Widget _row(_CountLine l) {
+    final p = products[l.productId]!;
+    final isLast = l.productId == lastId;
+    return ItemRow(
+      key: ValueKey(l.productId),
+      title: p.name,
+      highlight: isLast,
+      onTap: () => _actions(l),
+      badge: isLast && lastNote != null ? Pill('اتضاف $lastNote', fg: cGreen, bg: cSurface, icon: Icons.add) : null,
+      details: Text.rich(
+        TextSpan(
+          children: [
+            const TextSpan(text: 'المعدود: '),
+            TextSpan(text: p.baseText(l.base), style: T.subStrong),
+          ],
         ),
       ),
+      controls: IconBox(Icons.edit_outlined, label: 'تعديل العدد', onPressed: () => _edit(l)),
     );
   }
 }
 
 class _CountDone extends StatelessWidget {
   final int count;
-  const _CountDone({required this.count});
+  final String id;
+  const _CountDone({required this.count, required this.id});
   @override
-  Widget build(BuildContext context) => Scaffold(
-    appBar: topBar(context, 'جرد'),
-    body: ListView(
-      padding: const EdgeInsets.all(20),
-      children: [
-        const SizedBox(height: 20),
-        const CircleAvatar(
-          radius: 60,
-          backgroundColor: cGreen,
-          child: Icon(Icons.check, size: 70, color: Colors.white),
-        ),
-        const SizedBox(height: 16),
-        const Text(
-          'تم حفظ الجرد',
-          textAlign: TextAlign.center,
-          style: TextStyle(fontSize: 34, fontWeight: FontWeight.w800),
-        ),
-        Text(
-          '$count صنف · اتبعت للمشرف للمراجعة',
-          textAlign: TextAlign.center,
-          style: const TextStyle(fontSize: 20, color: cMuted),
-        ),
-        const SizedBox(height: 24),
-        BigButton.light('الرئيسية', onPressed: () => Navigator.of(context).pop()),
-      ],
-    ),
-  );
+  Widget build(BuildContext context) {
+    final now = TimeOfDay.now();
+    return WorkScaffold(
+      title: 'جرد',
+      body: ListView(
+        padding: const EdgeInsets.all(S.l),
+        children: [
+          const SizedBox(height: S.m),
+          const CircleAvatar(
+            radius: 40,
+            backgroundColor: cGreen,
+            child: Icon(Icons.check, size: 48, color: Colors.white),
+          ),
+          const SizedBox(height: S.m),
+          const Text('تم حفظ الجرد', textAlign: TextAlign.center, style: T.heading),
+          Text(
+            '$count صنف · الساعة ${now.hour.toString().padLeft(2, '0')}:${now.minute.toString().padLeft(2, '0')}',
+            textAlign: TextAlign.center,
+            style: T.sub,
+          ),
+          const SizedBox(height: S.m),
+          Center(child: SendStatus(outboxKey: 'counts:$id')),
+          const SizedBox(height: S.xs),
+          const Text('بعد ما يتبعت، المشرف بيراجعه ويعتمده من لوحة التحكم.', textAlign: TextAlign.center, style: T.sub),
+          const SizedBox(height: S.l),
+          BigButton.light('الرئيسية', onPressed: () => Navigator.of(context).pop()),
+        ],
+      ),
+    );
+  }
 }

@@ -34,8 +34,9 @@ class TamweenApp extends StatelessWidget {
         supportedLocales: const [Locale('ar')],
         localizationsDelegates: GlobalMaterialLocalizations.delegates,
         builder: (context, child) => MediaQuery(
-          // Keep the large sizes we designed even if the device font scale is odd.
-          data: MediaQuery.of(context).copyWith(textScaler: const TextScaler.linear(1.0)),
+          // Follow the Android font size setting, within what the layouts are tested at.
+          data: MediaQuery.of(context)
+              .copyWith(textScaler: MediaQuery.textScalerOf(context).clamp(minScaleFactor: 0.9, maxScaleFactor: 1.3)),
           child: child!,
         ),
         home: const Root(),

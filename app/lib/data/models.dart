@@ -6,6 +6,7 @@ class Product {
   final String name;
   final String unit; // piece | kg
   final int price; // fils per piece or per kg
+  final int cost; // purchase price, fils per piece or per kg
   final int carton; // pieces per carton, 0 = none
   final int stock; // thousandths of the base unit
   final bool active;
@@ -16,6 +17,7 @@ class Product {
     required this.name,
     required this.unit,
     required this.price,
+    this.cost = 0,
     required this.carton,
     required this.stock,
     required this.active,
@@ -24,6 +26,7 @@ class Product {
   bool get isKg => unit == 'kg';
   List<String> get modes => isKg ? ['kg'] : (carton > 0 ? ['piece', 'carton'] : ['piece']);
   int unitPrice(String mode) => mode == 'carton' ? price * carton : price;
+  int unitCost(String mode) => mode == 'carton' ? cost * carton : cost;
 
   /// Quantity in a mode (thousandths) -> base unit thousandths.
   int toBase(int qtyMilli, String mode) => mode == 'carton' ? qtyMilli * carton : qtyMilli;
@@ -45,6 +48,7 @@ class Product {
     'name': name,
     'unit': unit,
     'price': price,
+    'cost': cost,
     'carton': carton,
     'stock': stock,
     'active': active ? 1 : 0,
@@ -56,6 +60,7 @@ class Product {
     name: r['name'] as String,
     unit: r['unit'] as String,
     price: r['price'] as int,
+    cost: (r['cost'] as int?) ?? 0,
     carton: r['carton'] as int,
     stock: r['stock'] as int,
     active: (r['active'] as int) == 1,
@@ -67,6 +72,7 @@ class Product {
     name: j['name'] as String,
     unit: j['unit'] as String,
     price: parseMilli(j['price'].toString()) ?? 0,
+    cost: parseMilli((j['cost'] ?? '0').toString()) ?? 0,
     carton: j['carton'] as int,
     stock: parseMilli(j['stock'].toString()) ?? 0,
     active: j['active'] as bool,

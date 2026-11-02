@@ -1,19 +1,21 @@
 import 'package:flutter/material.dart';
 
 import '../data/app_state.dart';
+import 'price_screen.dart' show syncedAgo;
 import 'scope.dart';
 import 'widgets.dart';
 
+/// Why the server refused a record, and what to do about it.
 const _reasons = {
-  'unknown_product': 'فيه صنف مش موجود على السيرفر',
-  'bad_line': 'كمية أو وحدة غلط',
-  'empty_sale': 'فاتورة فاضية',
-  'empty_count': 'جرد فاضي',
-  'unknown_receipt': 'السند مش موجود على السيرفر',
-  'receipt_not_open': 'السند اتلغى أو اتستلم من جهاز تاني',
-  'invalid': 'بيانات غير مفهومة',
+  'unknown_product': ('فيه صنف اتمسح من السيرفر', 'المشرف يرجّع الصنف أو يسجّل العملية يدوياً من لوحة التحكم.'),
+  'bad_line': ('كمية أو وحدة مش مقبولة', 'سجّل العملية تاني بالكمية الصح.'),
+  'empty_sale': ('فاتورة فاضية', 'مفيش حاجة مطلوبة.'),
+  'empty_count': ('جرد فاضي', 'مفيش حاجة مطلوبة.'),
+  'unknown_receipt': ('السند اتمسح من السيرفر', 'راجع المشرف.'),
+  'receipt_not_open': ('السند اتلغى أو اتستلم من جهاز تاني', 'المشرف يراجع السند في لوحة التحكم.'),
+  'invalid': ('بيانات مش مفهومة', 'بلّغ المسؤول عن السيستم.'),
 };
-const _kinds = {'sales': 'فاتورة بيع', 'counts': 'جرد', 'receipts': 'استلام'};
+const _kinds = {'sales': 'بيع', 'counts': 'جرد', 'receipts': 'استلام'};
 
 class SettingsScreen extends StatefulWidget {
   const SettingsScreen({super.key});
@@ -33,67 +35,107 @@ class _SettingsScreenState extends State<SettingsScreen> {
     });
   }
 
-  String _ago(DateTime? t) {
-    if (t == null) return 'لسه';
-    final m = DateTime.now().difference(t).inMinutes;
-    return m < 1 ? 'الآن' : 'من $m دقيقة';
-  }
-
   @override
   Widget build(BuildContext context) {
     final app = AppScope.of(context);
-    final status = switch (app.status) {
-      SyncStatus.syncing => 'جاري المزامنة…',
-      SyncStatus.ok => 'متصل بالسيرفر',
-      SyncStatus.offline => 'مش قادر يوصل للسيرفر. البيع شغال والبيانات هتتبعت لما الشبكة ترجع.',
-      SyncStatus.unpaired => 'الجهاز اتفصل من لوحة التحكم. لازم يتربط تاني.',
-      SyncStatus.error => 'السيرفر رد بخطأ. كلّم المسؤول.',
-      SyncStatus.idle => '—',
+    final (IconData icon, String title, String sub, Color fg, Color bg) = switch (app.status) {
+      SyncStatus.syncing => (Icons.sync, 'جاري ${W.sync}…', 'بيبعت العمليات وينزّل التحديثات', cBlue, cBlue2),
+      SyncStatus.ok when rejected.isNotEmpty => (Icons.error_outline, 'متصل — فيه عمليات مرفوضة', 'شوف السبب تحت', cOrange, cOrange2),
+      SyncStatus.ok => (Icons.cloud_done_outlined, 'متصل بالسيرفر', 'كل حاجة بتتبعت أول بأول', cGreen, cGreen2),
+      SyncStatus.offline => (
+        Icons.cloud_off_outlined,
+        'غير متصل',
+        'كمّل شغلك عادي: البيع والجرد والاستلام بيتحفظوا على الجهاز ويتبعتوا لما الشبكة ترجع.',
+        cOrange,
+        cOrange2,
+      ),
+      SyncStatus.unpaired => (Icons.link_off, 'الجهاز غير مربوط', 'المدير يعمل كود ربط جديد من لوحة التحكم ← الأجهزة.', cRed, cRed2),
+      SyncStatus.error => (Icons.error_outline, 'السيرفر رد بخطأ', 'الشغل محفوظ على الجهاز. بلّغ المسؤول عن السيستم.', cRed, cRed2),
+      SyncStatus.idle => (Icons.cloud_queue, '—', '', cMuted, cGray2),
     };
-    return Scaffold(
-      appBar: topBar(context, 'المزامنة'),
+    final byKind = app.pendingByKind;
+    final t = app.lastSync;
+    return WorkScaffold(
+      title: W.sync,
       body: ListView(
-        padding: const EdgeInsets.all(12),
+        padding: const EdgeInsets.all(S.edge),
         children: [
           CardBox(
-            child: Column(
+            color: bg,
+            border: fg,
+            child: Row(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(status, style: const TextStyle(fontSize: 20, fontWeight: FontWeight.w800)),
-                const SizedBox(height: 8),
-                _row('الجهاز', app.deviceName ?? '—'),
-                _row('السيرفر', app.serverUrl ?? '—'),
-                _row('آخر مزامنة', _ago(app.lastSync)),
-                _row('مستني يتبعت', '${app.pending}'),
+                Icon(icon, color: fg, size: 28),
+                const SizedBox(width: S.s),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(title, style: T.heading.copyWith(color: fg)),
+                      if (sub.isNotEmpty) Text(sub, style: T.sub.copyWith(color: cInk)),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+          CardBox(
+            child: Column(
+              children: [
+                _row(
+                  'آخر ${W.sync}',
+                  t == null
+                      ? 'لسه'
+                      : '${t.day}/${t.month}/${t.year} ${t.hour.toString().padLeft(2, '0')}:${t.minute.toString().padLeft(2, '0')}',
+                ),
+                _row('', syncedAgo(t)),
+                const Divider(height: S.m),
+                _row('مستني يتبعت', app.pending == 0 ? 'ولا حاجة' : '${app.pending}'),
+                for (final e in byKind.entries) _row('   ${_kinds[e.key] ?? e.key}', '${e.value}'),
+                _row('مرفوض', '${app.rejected}'),
+                const Divider(height: S.m),
                 _row('الأصناف على الجهاز', '${app.productCount}'),
+                _row('الجهاز', app.deviceName ?? '—'),
+                _row('السيرفر', app.serverUrl ?? '—', ltr: true),
               ],
             ),
           ),
           BigButton(
-            app.status == SyncStatus.syncing ? 'جاري المزامنة…' : 'مزامنة الآن',
+            app.status == SyncStatus.syncing ? 'جاري ${W.sync}…' : W.syncNow,
             icon: Icons.sync,
             onPressed: app.status == SyncStatus.syncing || !app.paired ? null : () => app.sync(full: true),
           ),
+          const Padding(
+            padding: EdgeInsets.only(top: S.xs),
+            child: Text('${W.sync} بتبعت اللي على الجهاز، وتنزّل الأصناف والأسعار والأرصدة والموظفين والسندات.', style: T.sub),
+          ),
           if (rejected.isNotEmpty) ...[
-            const SizedBox(height: 16),
-            const Text(
-              'عمليات رفضها السيرفر',
-              style: TextStyle(fontSize: 21, fontWeight: FontWeight.w800, color: cRed),
-            ),
-            const Text('دي محفوظة على الجهاز ومش هتتبعت. راجعها مع المدير.', style: TextStyle(fontSize: 17, color: cMuted)),
-            const SizedBox(height: 8),
+            const SizedBox(height: S.l),
+            const Text('عمليات رفضها السيرفر', style: T.heading),
+            const Text('محفوظة على الجهاز ومش هتتبعت تاني لوحدها.', style: T.sub),
+            const SizedBox(height: S.s),
             for (final r in rejected)
-              CardBox(
-                border: cRed,
-                child: Text(
-                  '${_kinds[r['kind']] ?? r['kind']} · ${(r['created_at'] as String).substring(0, 16).replaceFirst('T', ' ')}\n'
-                  '${_reasons[r['error']] ?? r['error']}',
-                  style: const TextStyle(fontSize: 18),
-                ),
+              Builder(
+                builder: (_) {
+                  final reason = _reasons[r['error']] ?? (r['error'].toString(), 'بلّغ المسؤول عن السيستم.');
+                  final at = (r['created_at'] as String).substring(0, 16).replaceFirst('T', ' ');
+                  return CardBox(
+                    border: cRed,
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text('${_kinds[r['kind']] ?? r['kind']} · $at', style: T.label),
+                        Text('السبب: ${reason.$1}', style: T.sub.copyWith(color: cRed)),
+                        Text('المطلوب: ${reason.$2}', style: T.sub),
+                      ],
+                    ),
+                  );
+                },
               ),
           ],
           if (app.employee?.isSupervisor == true) ...[
-            const SizedBox(height: 24),
+            const SizedBox(height: S.l),
             BigButton.light(
               'فك ربط الجهاز (للمشرف)',
               icon: Icons.link_off,
@@ -121,20 +163,13 @@ class _SettingsScreenState extends State<SettingsScreen> {
     );
   }
 
-  Widget _row(String k, String v) => Padding(
-    padding: const EdgeInsets.symmetric(vertical: 4),
+  Widget _row(String k, String v, {bool ltr = false}) => Padding(
+    padding: const EdgeInsets.symmetric(vertical: 2),
     child: Row(
       children: [
-        Expanded(
-          child: Text(k, style: const TextStyle(fontSize: 18, color: cMuted)),
-        ),
+        Expanded(child: Text(k, style: T.sub)),
         Flexible(
-          child: Text(
-            v,
-            textAlign: TextAlign.left,
-            textDirection: TextDirection.ltr,
-            style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w800),
-          ),
+          child: Text(v, textAlign: TextAlign.left, textDirection: ltr ? TextDirection.ltr : null, style: T.subStrong),
         ),
       ],
     ),

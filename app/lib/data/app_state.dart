@@ -23,7 +23,10 @@ class AppState extends ChangeNotifier {
   Employee? employee;
 
   SyncStatus status = SyncStatus.idle;
+
+  /// Last time data was downloaded from the server (kept across restarts).
   DateTime? lastSync;
+  Map<String, int> pendingByKind = {};
   int pending = 0;
   int rejected = 0;
   int productCount = 0;
@@ -39,6 +42,7 @@ class AppState extends ChangeNotifier {
     serverUrl = await db.get('server_url');
     token = await db.get('token');
     deviceName = await db.get('device_name');
+    lastSync = DateTime.tryParse(await db.get('last_sync') ?? '');
     final empId = int.tryParse(await db.get('employee_id') ?? '');
     if (empId != null) {
       final e = await db.employeeById(empId);
@@ -116,6 +120,7 @@ class AppState extends ChangeNotifier {
     pending = await db.countOutbox('pending');
     rejected = await db.countOutbox('rejected');
     productCount = await db.productCount();
+    pendingByKind = await db.pendingByKind();
   }
 
   @visibleForTesting
@@ -157,6 +162,7 @@ class AppState extends ChangeNotifier {
       await db.applyPull(data);
       if (since == 0) _lastFull = DateTime.now();
       lastSync = DateTime.now();
+      await db.set('last_sync', lastSync!.toIso8601String());
       status = SyncStatus.ok;
       await _checkEmployee();
     } on ApiException catch (e) {

@@ -40,9 +40,7 @@ class _LoginScreenState extends State<LoginScreen> {
           children: [
             const Icon(Icons.diamond_outlined, size: 30),
             const SizedBox(width: 8),
-            const Expanded(
-              child: Text('تموين', style: TextStyle(fontSize: 26, fontWeight: FontWeight.w800)),
-            ),
+            const Expanded(child: Text('تموين', style: T.pageTitle)),
             Text(app.deviceName ?? '', style: const TextStyle(fontSize: 16)),
           ],
         ),
@@ -84,7 +82,7 @@ class _LoginScreenState extends State<LoginScreen> {
                 children: [
                   const Padding(
                     padding: EdgeInsets.fromLTRB(4, 4, 4, 12),
-                    child: Text('اضغط على اسمك', style: TextStyle(fontSize: 24, fontWeight: FontWeight.w800)),
+                    child: Text('اضغط على اسمك', style: T.heading),
                   ),
                   for (final e in _staff!)
                     Padding(
@@ -107,13 +105,11 @@ class _LoginScreenState extends State<LoginScreen> {
                                   backgroundColor: cGreen2,
                                   child: Text(
                                     e.name.characters.first,
-                                    style: const TextStyle(fontSize: 24, color: cGreen, fontWeight: FontWeight.w800),
+                                    style: const TextStyle(fontSize: 20, color: cGreen, fontWeight: FontWeight.w800),
                                   ),
                                 ),
                                 const SizedBox(width: 14),
-                                Expanded(
-                                  child: Text(e.name, style: const TextStyle(fontSize: 24, fontWeight: FontWeight.w800)),
-                                ),
+                                Expanded(child: Text(e.name, style: T.heading)),
                                 Text(Employee.roleNames[e.role] ?? '', style: const TextStyle(fontSize: 17, color: cMuted)),
                               ],
                             ),
@@ -214,11 +210,7 @@ class _PinScreenState extends State<PinScreen> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            const Text(
-              'اكتب رقمك السري',
-              textAlign: TextAlign.center,
-              style: TextStyle(fontSize: 24, fontWeight: FontWeight.w800),
-            ),
+            const Text('اكتب رقمك السري', textAlign: TextAlign.center, style: T.heading),
             const SizedBox(height: 16),
             Row(
               mainAxisAlignment: MainAxisAlignment.center,
@@ -269,7 +261,7 @@ class _PinScreenState extends State<PinScreen> {
                                   child: Center(
                                     child: k == 'back'
                                         ? const Icon(Icons.backspace_outlined, size: 30)
-                                        : Text(k, style: const TextStyle(fontSize: 34, fontWeight: FontWeight.w800)),
+                                        : Text(k, style: const TextStyle(fontSize: 28, fontWeight: FontWeight.w800)),
                                   ),
                                 ),
                               ),

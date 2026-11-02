@@ -14,22 +14,24 @@ Future<Product?> findScanned(BuildContext context, AppState app, String code) as
   }
   beepError();
   if (context.mounted) {
-    await alertSheet(
+    final choice = await alertSheet(
       context,
-      title: 'الصنف غير مسجل',
+      title: 'الصنف غير مسجل على الجهاز',
+      action: 'ابحث بالاسم',
       body: Text.rich(
         TextSpan(
           children: [
-            const TextSpan(text: 'هذا الباركود غير موجود على الجهاز:\n'),
+            const TextSpan(text: 'الباركود: '),
             TextSpan(
               text: code,
               style: const TextStyle(fontWeight: FontWeight.w800),
             ),
-            const TextSpan(text: '\nلو الصنف جديد، اطلب من المشرف إضافته ثم انتظر المزامنة.'),
+            const TextSpan(text: '\nلو الصنف جديد: المشرف يضيفه من لوحة التحكم، وبعدين اعمل مزامنة.'),
           ],
         ),
       ),
     );
+    if (choice != null && context.mounted) return searchAndPick(context, app);
   }
   return null;
 }

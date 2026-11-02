@@ -28,7 +28,7 @@ def test_pull_full_then_incremental(device_client, seed, db):
     r = device_client.get("/api/v1/sync/pull?since=0").json()
     assert {p["barcode"] for p in r["products"]} == {"6281000123456", "2100000012345"}
     assert len(r["employees"]) == 2 and len(r["receipts"]) == 1
-    assert "cost" not in r["products"][0]  # cashiers never receive purchase prices
+    assert r["products"][0]["cost"] in ("2.050", "0.280")  # purchase price is shown on devices
     emp = next(e for e in r["employees"] if e["name"] == "أحمد")
     assert verify_pin("2222", emp["pin_salt"], emp["pin_hash"])
     v = r["version"]

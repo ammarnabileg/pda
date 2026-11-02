@@ -15,13 +15,26 @@ class LocalDb {
   static Future<LocalDb> open({String? path, DatabaseFactory? factory}) async {
     final f = factory ?? databaseFactory;
     final file = path ?? p.join(await f.getDatabasesPath(), 'tamween.db');
-    final db = await f.openDatabase(file, options: OpenDatabaseOptions(version: 1, onCreate: _create));
+    final db = await f.openDatabase(
+      file,
+      options: OpenDatabaseOptions(version: 2, onCreate: _create, onUpgrade: _upgrade),
+    );
     return LocalDb(db);
   }
 
+  static Future<void> _upgrade(Database db, int from, int to) async {
+    if (from < 2) {
+      await db.execute('ALTER TABLE products ADD COLUMN cost INTEGER NOT NULL DEFAULT 0');
+      // Purchase prices only arrive with a full download.
+      await db.insert('kv', {'key': 'version', 'value': '0'}, conflictAlgorithm: ConflictAlgorithm.replace);
+    }
+  }
+
   static Future<void> _create(Database db, int version) async {
-    await db.execute('''CREATE TABLE products(id INTEGER PRIMARY KEY, barcode TEXT NOT NULL, name TEXT NOT NULL,
-      unit TEXT NOT NULL, price INTEGER NOT NULL, carton INTEGER NOT NULL, stock INTEGER NOT NULL, active INTEGER NOT NULL)''');
+    await db.execute(
+      '''CREATE TABLE products(id INTEGER PRIMARY KEY, barcode TEXT NOT NULL, name TEXT NOT NULL,
+      unit TEXT NOT NULL, price INTEGER NOT NULL, cost INTEGER NOT NULL DEFAULT 0, carton INTEGER NOT NULL, stock INTEGER NOT NULL, active INTEGER NOT NULL)''',
+    );
     await db.execute('CREATE INDEX products_barcode ON products(barcode)');
     await db.execute('''CREATE TABLE employees(id INTEGER PRIMARY KEY, name TEXT NOT NULL, role TEXT NOT NULL,
       pin_salt TEXT NOT NULL, pin_hash TEXT NOT NULL, active INTEGER NOT NULL)''');
@@ -189,6 +202,13 @@ class LocalDb {
 
   Future<List<Map<String, Object?>>> pendingOutbox({int limit = 100}) =>
       db.query('outbox', where: "state = 'pending'", orderBy: 'created_at', limit: limit);
+
+  Future<bool> inOutbox(String key) async => (await db.query('outbox', columns: ['id'], where: 'id = ?', whereArgs: [key])).isNotEmpty;
+
+  Future<Map<String, int>> pendingByKind() async {
+    final r = await db.rawQuery("SELECT kind, COUNT(*) AS n FROM outbox WHERE state = 'pending' GROUP BY kind");
+    return {for (final x in r) x['kind'] as String: x['n'] as int};
+  }
 
   Future<int> countOutbox(String state) async =>
       Sqflite.firstIntValue(await db.rawQuery('SELECT COUNT(*) FROM outbox WHERE state = ?', [state])) ?? 0;

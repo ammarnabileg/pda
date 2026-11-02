@@ -79,7 +79,7 @@ jobs:
         run: flutter analyze
       - name: Unit and screen tests
         working-directory: app
-        run: flutter test test/unit_test.dart test/ui_flow_test.dart
+        run: flutter test test/unit_test.dart test/ui_flow_test.dart test/db_upgrade_test.dart
       - name: End-to-end sync against a real server
         run: ./scripts/e2e.sh
       - name: Release signing key

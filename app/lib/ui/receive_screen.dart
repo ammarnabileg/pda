@@ -9,6 +9,11 @@ import 'widgets.dart';
 
 const noteChips = ['كرتون تالف', 'كمية ناقصة', 'قريب الانتهاء', 'صنف غير مطابق'];
 
+String _date(String iso) {
+  final d = DateTime.tryParse(iso)?.toLocal();
+  return d == null ? '' : '${d.day}/${d.month}/${d.year}';
+}
+
 class ReceiveListScreen extends StatefulWidget {
   const ReceiveListScreen({super.key});
   @override
@@ -18,6 +23,8 @@ class ReceiveListScreen extends StatefulWidget {
 class _ReceiveListScreenState extends State<ReceiveListScreen> {
   List<ReceiptDoc>? items;
   Map<int, int> progress = {};
+  String query = '';
+  bool newestFirst = true;
 
   @override
   void didChangeDependencies() {
@@ -65,59 +72,70 @@ class _ReceiveListScreenState extends State<ReceiveListScreen> {
 
   @override
   Widget build(BuildContext context) {
-    return ScanListener(
+    final app = AppScope.read(context);
+    var list = (items ?? []).where((r) => query.isEmpty || '${r.id}'.contains(query) || r.supplier.contains(query)).toList();
+    list.sort((a, b) => newestFirst ? b.createdAt.compareTo(a.createdAt) : a.createdAt.compareTo(b.createdAt));
+    return WorkScaffold(
+      title: 'استلام',
       onScan: _onScan,
-      child: Scaffold(
-        appBar: topBar(context, 'استلام بضاعة'),
-        body: items == null
-            ? const Center(child: CircularProgressIndicator())
-            : items!.isEmpty
-            ? const Padding(
-                padding: EdgeInsets.all(24),
-                child: Text(
-                  'مفيش سندات بانتظار الاستلام.\nالمشرف بيضيفها من لوحة التحكم.',
-                  textAlign: TextAlign.center,
-                  style: TextStyle(fontSize: 20, color: cMuted),
+      body: items == null
+          ? const Center(child: CircularProgressIndicator())
+          : items!.isEmpty
+          ? Center(
+              child: StateMessage(
+                icon: Icons.inbox_outlined,
+                title: 'مفيش سندات مستنية الاستلام',
+                sub: 'المشرف بيضيف السندات من لوحة التحكم. بعدها اعمل ${W.sync}.',
+                action: BigButton.light(W.syncNow, icon: Icons.sync, onPressed: () => app.sync(full: true)),
+              ),
+            )
+          : ListView(
+              padding: const EdgeInsets.all(S.edge),
+              children: [
+                Row(
+                  children: [
+                    Expanded(child: Text('${items!.length} سند مستني · امسح صنف لفتح السند بتاعه', style: T.sub)),
+                    TextButton.icon(
+                      onPressed: () => setState(() => newestFirst = !newestFirst),
+                      icon: const Icon(Icons.swap_vert, size: 20),
+                      label: Text(newestFirst ? 'الأحدث' : 'الأقدم', style: T.label),
+                    ),
+                  ],
                 ),
-              )
-            : ListView(
-                padding: const EdgeInsets.all(12),
-                children: [
-                  for (final r in items!)
-                    Padding(
-                      padding: const EdgeInsets.only(bottom: 10),
-                      child: Material(
-                        color: Colors.white,
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(16),
-                          side: const BorderSide(color: cLine, width: 2),
-                        ),
-                        child: InkWell(
-                          borderRadius: BorderRadius.circular(16),
-                          onTap: () async {
-                            await Navigator.of(context).push(MaterialPageRoute(builder: (_) => ReceiveScreen(receiptId: r.id)));
-                            _load();
-                          },
-                          child: Padding(
-                            padding: const EdgeInsets.all(14),
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Text(r.supplier, style: const TextStyle(fontSize: 22, fontWeight: FontWeight.w800)),
-                                Text('سند رقم ${r.id} · ${r.lines.length} أصناف', style: const TextStyle(fontSize: 18, color: cMuted)),
-                                const SizedBox(height: 8),
-                                (progress[r.id] ?? 0) > 0
-                                    ? Pill('تمت مراجعة ${progress[r.id]} من ${r.lines.length}', fg: cOrange, bg: cOrange2)
-                                    : const Pill('لم يبدأ'),
-                              ],
-                            ),
-                          ),
+                if (items!.length > 5)
+                  Padding(
+                    padding: const EdgeInsets.only(bottom: S.s),
+                    child: TextField(
+                      onChanged: (v) => setState(() => query = v.trim()),
+                      onTapOutside: (_) => FocusManager.instance.primaryFocus?.unfocus(),
+                      decoration: InputDecoration(
+                        isDense: true,
+                        prefixIcon: const Icon(Icons.search),
+                        hintText: 'رقم السند أو اسم المورد',
+                        filled: true,
+                        fillColor: cSurface,
+                        border: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(S.radius),
+                          borderSide: const BorderSide(color: cLine),
                         ),
                       ),
                     ),
-                ],
-              ),
-      ),
+                  ),
+                for (final r in list)
+                  ItemRow(
+                    title: r.supplier,
+                    amount: '#${r.id}',
+                    details: Text('${r.lines.length} أصناف · ${_date(r.createdAt)}'),
+                    controls: (progress[r.id] ?? 0) > 0
+                        ? Pill('اتراجع ${progress[r.id]} من ${r.lines.length}', fg: cOrange, bg: cOrange2, icon: Icons.timelapse)
+                        : const Pill('لم يبدأ', icon: Icons.radio_button_unchecked),
+                    onTap: () async {
+                      await Navigator.of(context).push(MaterialPageRoute(builder: (_) => ReceiveScreen(receiptId: r.id)));
+                      _load();
+                    },
+                  ),
+              ],
+            ),
     );
   }
 }
@@ -127,6 +145,8 @@ class _Recv {
   String mode;
   _Recv(this.qty, this.mode);
 }
+
+enum _Filter { all, pending, diff, ok }
 
 class ReceiveScreen extends StatefulWidget {
   final int receiptId;
@@ -144,7 +164,10 @@ class _ReceiveScreenState extends State<ReceiveScreen> {
   final recv = <int, _Recv>{};
   final extra = <int>[];
   final notes = <String>[];
-  int? flashId;
+  String freeNote = '';
+  int? lastId;
+  _Filter filter = _Filter.all;
+  late final _noteCtl = TextEditingController();
 
   String get _key => 'draft_receipt_${widget.receiptId}';
 
@@ -152,6 +175,12 @@ class _ReceiveScreenState extends State<ReceiveScreen> {
   void initState() {
     super.initState();
     _load();
+  }
+
+  @override
+  void dispose() {
+    _noteCtl.dispose();
+    super.dispose();
   }
 
   Future<void> _load() async {
@@ -162,6 +191,8 @@ class _ReceiveScreenState extends State<ReceiveScreen> {
       (d['recv'] as Map).forEach((k, v) => recv[int.parse(k as String)] = _Recv(v['q'] as int, v['m'] as String));
       extra.addAll((d['extra'] as List).cast<int>());
       notes.addAll((d['notes'] as List).cast<String>());
+      freeNote = (d['free'] as String?) ?? '';
+      _noteCtl.text = freeNote;
     }
     if (doc != null) products.addAll(await db.productsByIds([...doc.lines.map((l) => l.productId), ...extra]));
     if (mounted) setState(() => r = doc);
@@ -179,6 +210,7 @@ class _ReceiveScreenState extends State<ReceiveScreen> {
     },
     'extra': extra,
     'notes': notes,
+    'free': freeNote,
   });
 
   ReceiptLine? _line(int pid) {
@@ -188,19 +220,27 @@ class _ReceiveScreenState extends State<ReceiveScreen> {
     return null;
   }
 
-  /// (text, fg, bg) or null when not reviewed yet.
-  (String, Color, Color)? _status(int pid) {
+  int? _diff(int pid) {
     final x = recv[pid];
     if (x == null) return null;
     final p = products[pid]!;
     final l = _line(pid);
-    if (l == null) return ('صنف زائد غير مطلوب', cBlue, cBlue2);
-    final d = p.toBase(x.qty, x.mode) - p.toBase(l.ordered, l.mode);
-    if (d == 0) return ('مطابق', cGreen, cGreen2);
-    return d < 0 ? ('ناقص ${_diff(p, -d)}', cOrange, cOrange2) : ('زيادة ${_diff(p, d)}', cBlue, cBlue2);
+    return p.toBase(x.qty, x.mode) - (l == null ? 0 : p.toBase(l.ordered, l.mode));
   }
 
-  String _diff(Product p, int base) {
+  /// (text, icon, fg, bg) or null when not reviewed yet. Always words, not colour only.
+  (String, IconData, Color, Color)? _status(int pid) {
+    final d = _diff(pid);
+    if (d == null) return null;
+    if (_line(pid) == null) return ('زائد غير مطلوب', Icons.add_circle_outline, cBlue, cBlue2);
+    final p = products[pid]!;
+    if (d == 0) return ('مطابق', Icons.check_circle_outline, cGreen, cGreen2);
+    return d < 0
+        ? ('ناقص ${_amount(p, -d)}', Icons.remove_circle_outline, cOrange, cOrange2)
+        : ('زيادة ${_amount(p, d)}', Icons.add_circle_outline, cBlue, cBlue2);
+  }
+
+  String _amount(Product p, int base) {
     if (p.isKg) return '${money(base)} كجم';
     if (p.carton > 0 && base % (p.carton * 1000) == 0) return '${base ~/ (p.carton * 1000)} كرتون';
     return '${qty(base, 'piece')} حبة';
@@ -214,19 +254,26 @@ class _ReceiveScreenState extends State<ReceiveScreen> {
       context,
       title: p.name,
       hint: l != null
-          ? 'المطلوب: ${qtyText(l.ordered, l.mode)}. اكتب اللي وصل فعلاً (صفر لو ماوصلش)'
-          : 'صنف غير موجود في السند. اكتب الكمية اللي وصلت',
+          ? 'المطلوب: ${qtyText(l.ordered, l.mode)} — اكتب اللي وصل فعلاً (صفر لو ماوصلش)'
+          : 'صنف مش في السند — اكتب الكمية اللي وصلت',
       modes: p.modes,
       mode: cur?.mode ?? l?.mode ?? p.modes.first,
       initial: cur?.qty,
       allowZero: l != null,
+      carton: p.carton,
+      preview: l == null
+          ? null
+          : (q, m) {
+              final d = p.toBase(q, m) - p.toBase(l.ordered, l.mode);
+              return d == 0 ? 'مطابق للمطلوب' : (d < 0 ? 'ناقص ${_amount(p, -d)}' : 'زيادة ${_amount(p, d)}');
+            },
     );
     if (res?.scanned != null) return _onScan(res!.scanned!);
     if (res == null || !mounted) return;
     setState(() {
       if (isExtra && !extra.contains(pid)) extra.add(pid);
       recv[pid] = _Recv(res.qty, res.mode);
-      flashId = pid;
+      lastId = pid;
     });
     _save();
   }
@@ -235,7 +282,7 @@ class _ReceiveScreenState extends State<ReceiveScreen> {
     beepOk();
     setState(() {
       recv[l.productId] = _Recv(l.ordered, l.mode);
-      flashId = l.productId;
+      lastId = l.productId;
     });
     _save();
   }
@@ -248,7 +295,7 @@ class _ReceiveScreenState extends State<ReceiveScreen> {
     final ok = await confirmSheet(
       context,
       title: 'الصنف ده مش في السند',
-      body: Text('${p.name}\nغير مطلوب من المورد في هذا السند.'),
+      body: Text('${p.name}\nمش مطلوب من المورد في السند ده. تضيفه كصنف زائد؟'),
       yes: 'أضفه كصنف زائد',
       no: 'إلغاء',
       danger: true,
@@ -260,7 +307,7 @@ class _ReceiveScreenState extends State<ReceiveScreen> {
     final app = AppScope.read(context);
     final p = await app.db.productByBarcode(code);
     if (p == null) {
-      if (mounted) await findScanned(context, app, code); // shows the "not registered" message
+      if (mounted) await _onProduct(await findScanned(context, app, code));
       return;
     }
     if (_line(p.id) != null || extra.contains(p.id)) beepOk();
@@ -273,29 +320,39 @@ class _ReceiveScreenState extends State<ReceiveScreen> {
       beepError();
       await alertSheet(
         context,
-        title: 'باقي ${left.length} أصناف لم تراجع',
-        body: Text('${left.map((l) => '• ${products[l.productId]?.name ?? ''}').join('\n')}\n\nاضغط «وصل كامل» أو «كمية مختلفة» لكل صنف.'),
+        title: 'باقي ${left.length} أصناف ماتراجعتش',
+        body: Text(
+          '${left.map((l) => '• ${products[l.productId]?.name ?? ''}').join('\n')}\n\nلكل صنف: «كامل» لو وصل زي المطلوب، أو اضغط عليه واكتب اللي وصل.',
+        ),
       );
+      setState(() => filter = _Filter.pending);
       return;
     }
-    final diffs = [...r!.lines.map((l) => l.productId), ...extra].where((pid) => _status(pid)!.$2 != cGreen).toList();
+    final all = [...r!.lines.map((l) => l.productId), ...extra];
+    final diffs = all.where((pid) => _status(pid)!.$3 != cGreen).toList();
     final ok = await confirmSheet(
       context,
       title: 'تأكيد الاستلام؟',
-      body: Text(
-        diffs.isEmpty
-            ? 'كل الأصناف مطابقة للمطلوب.'
-            : 'فيه فروقات في ${diffs.length} صنف:\n${diffs.map((pid) => '• ${products[pid]!.name}: ${_status(pid)!.$1}').join('\n')}',
+      body: ConstrainedBox(
+        constraints: BoxConstraints(maxHeight: MediaQuery.of(context).size.height * .4),
+        child: SingleChildScrollView(
+          child: Text(
+            diffs.isEmpty
+                ? 'كل الأصناف (${all.length}) مطابقة للمطلوب.'
+                : 'فيه فروقات في ${diffs.length} من ${all.length} صنف:\n${diffs.map((pid) => '• ${products[pid]!.name}: ${_status(pid)!.$1}').join('\n')}',
+          ),
+        ),
       ),
       yes: 'نعم، تأكيد',
     );
     if (!ok || !mounted) return;
     final app = AppScope.read(context);
+    final allNotes = [...notes, if (freeNote.trim().isNotEmpty) freeNote.trim()];
     await app.db.enqueue('receipts', '${r!.id}', {
       'receipt_id': r!.id,
       'employee_id': app.employee?.id,
       'received_at': DateTime.now().toUtc().toIso8601String(),
-      'notes': notes.join('، '),
+      'notes': allNotes.join('، '),
       'lines': [
         for (final e in recv.entries) {'product_id': e.key, 'mode': e.value.mode, 'qty': money(e.value.qty)},
       ],
@@ -307,133 +364,229 @@ class _ReceiveScreenState extends State<ReceiveScreen> {
     await app.db.set(_key, null);
     await app.recordSaved();
     if (!mounted) return;
-    Navigator.of(context).pop();
-    toast(context, 'تم تأكيد استلام السند ${r!.id}');
+    Navigator.of(context).pushReplacement(
+      MaterialPageRoute(
+        builder: (_) => _ReceiveDone(id: r!.id, supplier: r!.supplier, diffs: diffs.length),
+      ),
+    );
   }
 
   @override
   Widget build(BuildContext context) {
     final app = AppScope.read(context);
     final doc = r;
-    final flash = flashId;
-    flashId = null;
     if (doc == null) {
-      return Scaffold(
-        appBar: topBar(context, 'سند'),
-        body: const Center(child: CircularProgressIndicator()),
+      return const WorkScaffold(
+        title: 'سند',
+        body: Center(child: CircularProgressIndicator()),
       );
     }
     final reviewed = doc.lines.where((l) => recv.containsKey(l.productId)).length;
     final all = [...doc.lines.map((l) => l.productId), ...extra];
-    return ScanListener(
+    final shown = all.where((pid) {
+      final s = _status(pid);
+      return switch (filter) {
+        _Filter.all => true,
+        _Filter.pending => s == null,
+        _Filter.diff => s != null && s.$3 != cGreen,
+        _Filter.ok => s != null && s.$3 == cGreen,
+      };
+    }).toList();
+    final counts = {
+      _Filter.all: all.length,
+      _Filter.pending: all.where((p) => _status(p) == null).length,
+      _Filter.diff: all.where((p) => _status(p) != null && _status(p)!.$3 != cGreen).length,
+      _Filter.ok: all.where((p) => _status(p)?.$3 == cGreen).length,
+    };
+    return WorkScaffold(
+      title: 'سند ${doc.id}',
       onScan: _onScan,
-      child: Scaffold(
-        appBar: topBar(context, 'سند ${doc.id}'),
-        body: ListView(
-          padding: const EdgeInsets.all(12),
-          children: [
-            CardBox(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(doc.supplier, style: const TextStyle(fontSize: 22, fontWeight: FontWeight.w800)),
-                  Text('تمت مراجعة $reviewed من ${doc.lines.length} أصناف', style: const TextStyle(fontSize: 17, color: cMuted)),
-                  if (doc.note.isNotEmpty) Text('ملاحظة: ${doc.note}', style: const TextStyle(fontSize: 17)),
-                  const SizedBox(height: 8),
-                  ClipRRect(
-                    borderRadius: BorderRadius.circular(99),
-                    child: LinearProgressIndicator(
-                      value: doc.lines.isEmpty ? 0 : reviewed / doc.lines.length,
-                      minHeight: 12,
-                      backgroundColor: cGray2,
-                      color: cGreen,
-                    ),
-                  ),
-                ],
-              ),
-            ),
-            ScanBar(
-              text: 'امسح الصنف لتسجيل كميته',
-              onType: () async => _onProduct(await typeAndFind(context, app)),
-              onSearch: () async => _onProduct(await searchAndPick(context, app)),
-            ),
-            for (final pid in all) _lineCard(pid, pid == flash),
-            const Padding(
-              padding: EdgeInsets.fromLTRB(2, 10, 2, 6),
-              child: Text('ملاحظات (اختياري)', style: TextStyle(fontSize: 19, fontWeight: FontWeight.w800)),
-            ),
-            Wrap(
-              spacing: 8,
-              runSpacing: 8,
+      body: Column(
+        children: [
+          // Pinned summary.
+          Container(
+            color: cSurface,
+            padding: const EdgeInsets.fromLTRB(S.edge, S.s, S.edge, S.s),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                for (final n in noteChips)
-                  FilterChip(
-                    label: Text(n, style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w700)),
-                    selected: notes.contains(n),
-                    selectedColor: cOrange2,
-                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 10),
-                    onSelected: (on) {
-                      setState(() => on ? notes.add(n) : notes.remove(n));
-                      _save();
-                    },
+                Row(
+                  children: [
+                    Expanded(
+                      child: Text(doc.supplier, maxLines: 1, overflow: TextOverflow.ellipsis, style: T.item),
+                    ),
+                    Text('اتراجع $reviewed من ${doc.lines.length}', style: T.subStrong),
+                  ],
+                ),
+                const SizedBox(height: S.xs),
+                ClipRRect(
+                  borderRadius: BorderRadius.circular(99),
+                  child: LinearProgressIndicator(
+                    value: doc.lines.isEmpty ? 0 : reviewed / doc.lines.length,
+                    minHeight: 6,
+                    backgroundColor: cGray2,
+                    color: cPrimary,
                   ),
+                ),
+                if (doc.note.isNotEmpty)
+                  Padding(
+                    padding: const EdgeInsets.only(top: S.xs),
+                    child: Text('ملاحظة المشرف: ${doc.note}', style: T.sub),
+                  ),
+                const SizedBox(height: S.s),
+                Wrap(
+                  spacing: S.xs,
+                  runSpacing: S.xs,
+                  children: [
+                    for (final f in _Filter.values)
+                      ChoiceChip(
+                        visualDensity: VisualDensity.compact,
+                        label: Text(
+                          '${switch (f) {
+                            _Filter.all => 'الكل',
+                            _Filter.pending => 'لم يُراجع',
+                            _Filter.diff => 'فيه فرق',
+                            _Filter.ok => 'مطابق',
+                          }} (${counts[f]})',
+                        ),
+                        selected: filter == f,
+                        onSelected: (_) => setState(() => filter = f),
+                      ),
+                  ],
+                ),
               ],
             ),
-          ],
-        ),
-        bottomNavigationBar: Footer(
-          children: [BigButton('تأكيد الاستلام', icon: Icons.check, onPressed: _finish)],
-        ),
+          ),
+          Expanded(
+            child: ListView(
+              padding: const EdgeInsets.all(S.edge),
+              children: [
+                ScanBar(
+                  text: 'امسح الصنف لتسجيل كميته',
+                  onType: () async => _onProduct(await typeAndFind(context, app)),
+                  onSearch: () async => _onProduct(await searchAndPick(context, app)),
+                ),
+                if (shown.isEmpty) const StateMessage(icon: Icons.filter_alt_off_outlined, title: 'مفيش أصناف في الفلتر ده'),
+                for (final pid in shown) _row(pid),
+                const SizedBox(height: S.m),
+                const Text('ملاحظات الاستلام (اختياري)', style: T.label),
+                const SizedBox(height: S.xs),
+                Wrap(
+                  spacing: S.xs,
+                  runSpacing: S.xs,
+                  children: [
+                    for (final n in noteChips)
+                      FilterChip(
+                        label: Text(n),
+                        selected: notes.contains(n),
+                        selectedColor: cOrange2,
+                        onSelected: (on) {
+                          setState(() => on ? notes.add(n) : notes.remove(n));
+                          _save();
+                        },
+                      ),
+                  ],
+                ),
+                const SizedBox(height: S.s),
+                TextField(
+                  controller: _noteCtl,
+                  maxLines: 2,
+                  onChanged: (v) {
+                    freeNote = v;
+                    _save();
+                  },
+                  onTapOutside: (_) => FocusManager.instance.primaryFocus?.unfocus(),
+                  decoration: InputDecoration(
+                    hintText: 'ملاحظة تانية، مثال: 3 علب زيت تالفة',
+                    filled: true,
+                    fillColor: cSurface,
+                    border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(S.radius),
+                      borderSide: const BorderSide(color: cLine),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+      footer: Footer(
+        children: [BigButton('تأكيد الاستلام', icon: Icons.check, onPressed: _finish)],
       ),
     );
   }
 
-  Widget _lineCard(int pid, bool flash) {
+  Widget _row(int pid) {
     final p = products[pid];
     if (p == null) {
       return const CardBox(
-        child: Text('صنف غير موجود على الجهاز. اعمل مزامنة.', style: TextStyle(fontSize: 18, color: cRed)),
+        child: Text('صنف مش موجود على الجهاز. اعمل مزامنة.', style: TextStyle(color: cRed)),
       );
     }
     final l = _line(pid);
     final x = recv[pid];
     final s = _status(pid);
-    return CardBox(
-      border: flash ? cGreen : (s?.$2 ?? cLine),
-      color: flash ? const Color(0xFFE9F7EE) : null,
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Expanded(
-                child: Text(p.name, style: const TextStyle(fontSize: 21, fontWeight: FontWeight.w800)),
-              ),
-              s == null ? const Pill('لم يراجع') : Pill(s.$1, fg: s.$2, bg: s.$3),
+    return ItemRow(
+      key: ValueKey(pid),
+      title: p.name,
+      highlight: pid == lastId,
+      accent: s?.$3,
+      badge: s == null ? const Pill('لم يُراجع', icon: Icons.radio_button_unchecked) : Pill(s.$1, fg: s.$3, bg: s.$4, icon: s.$2),
+      onTap: () => _qty(pid),
+      details: Text.rich(
+        TextSpan(
+          children: [
+            if (l != null) ...[const TextSpan(text: 'مطلوب '), TextSpan(text: qtyText(l.ordered, l.mode), style: T.subStrong)],
+            if (x != null) ...[
+              TextSpan(text: l != null ? ' · مستلم ' : 'مستلم '),
+              TextSpan(text: qtyText(x.qty, x.mode), style: T.subStrong),
             ],
-          ),
-          if (l != null)
-            Text(
-              'المطلوب: ${qtyText(l.ordered, l.mode)}${l.mode == 'carton' ? ' (${qty(l.ordered * p.carton, 'piece')} حبة)' : ''}',
-              style: const TextStyle(fontSize: 18),
-            ),
-          if (x != null) Text('المستلم: ${qtyText(x.qty, x.mode)}', style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w800)),
-          const SizedBox(height: 10),
-          if (x != null)
-            BigButton.light('تعديل الكمية', icon: Icons.edit_outlined, height: 58, onPressed: () => _qty(pid))
-          else
-            Row(
-              children: [
-                Expanded(
-                  child: BigButton('وصل كامل', icon: Icons.check, height: 58, onPressed: l == null ? null : () => _full(l)),
-                ),
-                const SizedBox(width: 8),
-                Expanded(child: BigButton.light('كمية مختلفة', height: 58, onPressed: () => _qty(pid))),
-              ],
-            ),
-        ],
+          ],
+        ),
       ),
+      controls: x == null && l != null
+          ? SizedBox(
+              height: S.touch,
+              child: FilledButton.icon(
+                style: FilledButton.styleFrom(
+                  backgroundColor: cPrimary,
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                ),
+                onPressed: () => _full(l),
+                icon: const Icon(Icons.check, size: 20),
+                label: const Text('كامل', style: T.button),
+              ),
+            )
+          : IconBox(Icons.edit_outlined, label: 'تعديل الكمية', onPressed: () => _qty(pid)),
     );
   }
+}
+
+class _ReceiveDone extends StatelessWidget {
+  final int id, diffs;
+  final String supplier;
+  const _ReceiveDone({required this.id, required this.supplier, required this.diffs});
+  @override
+  Widget build(BuildContext context) => WorkScaffold(
+    title: 'استلام',
+    body: ListView(
+      padding: const EdgeInsets.all(S.l),
+      children: [
+        const SizedBox(height: S.m),
+        const CircleAvatar(
+          radius: 40,
+          backgroundColor: cGreen,
+          child: Icon(Icons.check, size: 48, color: Colors.white),
+        ),
+        const SizedBox(height: S.m),
+        Text('تم تأكيد استلام السند $id', textAlign: TextAlign.center, style: T.heading),
+        Text('$supplier · ${diffs == 0 ? 'كله مطابق' : 'فيه فروقات في $diffs صنف'}', textAlign: TextAlign.center, style: T.sub),
+        const SizedBox(height: S.m),
+        Center(child: SendStatus(outboxKey: 'receipts:$id')),
+        const SizedBox(height: S.l),
+        BigButton.light('رجوع للسندات', onPressed: () => Navigator.of(context).pop()),
+      ],
+    ),
+  );
 }

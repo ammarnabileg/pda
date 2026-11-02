@@ -6,6 +6,17 @@ import 'scan_helpers.dart';
 import 'scope.dart';
 import 'widgets.dart';
 
+/// "When was this data last refreshed", shown wherever stock is shown: offline,
+/// the number on the device can be behind the server.
+String syncedAgo(DateTime? t) {
+  if (t == null) return 'لسه ماحصلش ${W.sync}';
+  final m = DateTime.now().difference(t).inMinutes;
+  final hm = '${t.hour.toString().padLeft(2, '0')}:${t.minute.toString().padLeft(2, '0')}';
+  if (m < 1) return 'آخر ${W.sync}: الآن';
+  if (m < 60) return 'آخر ${W.sync}: من $m دقيقة ($hm)';
+  return 'آخر ${W.sync}: ${t.day}/${t.month} $hm';
+}
+
 class PriceScreen extends StatefulWidget {
   final Product? initial;
   const PriceScreen({super.key, this.initial});
@@ -23,56 +34,53 @@ class _PriceScreenState extends State<PriceScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final app = AppScope.read(context);
+    final app = AppScope.of(context);
     Future<void> type() => _show(typeAndFind(context, app));
     Future<void> search() => _show(searchAndPick(context, app));
-    return ScanListener(
+    final unit = p?.isKg == true ? 'كجم' : 'حبة';
+    return WorkScaffold(
+      title: 'سعر صنف',
       onScan: (code) => _show(findScanned(context, app, code)),
-      child: Scaffold(
-        appBar: topBar(context, 'سعر صنف'),
-        body: ListView(
-          padding: const EdgeInsets.all(12),
-          children: [
-            if (p == null)
-              ScanPrompt(title: 'امسح باركود الصنف', sub: 'السعر سيظهر هنا بخط كبير', onType: type, onSearch: search)
-            else ...[
-              ScanBar(text: 'امسح صنفاً آخر', onType: type, onSearch: search),
-              CardBox(
-                padding: const EdgeInsets.all(18),
-                child: Column(
-                  children: [
-                    Text(
-                      p!.name,
-                      textAlign: TextAlign.center,
-                      style: const TextStyle(fontSize: 26, fontWeight: FontWeight.w800),
+      body: ListView(
+        padding: const EdgeInsets.all(S.edge),
+        children: [
+          if (p == null)
+            ScanPrompt(title: 'امسح الصنف', sub: 'السعر هيظهر هنا', onType: type, onSearch: search)
+          else ...[
+            ScanBar(text: 'امسح الصنف التالي', onType: type, onSearch: search),
+            CardBox(
+              padding: const EdgeInsets.all(S.l),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Text(p!.name, textAlign: TextAlign.center, style: T.heading.copyWith(fontSize: 20)),
+                  const SizedBox(height: S.s),
+                  // Shrinks instead of overflowing with large Android fonts.
+                  FittedBox(
+                    fit: BoxFit.scaleDown,
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      crossAxisAlignment: CrossAxisAlignment.baseline,
+                      textBaseline: TextBaseline.alphabetic,
+                      children: [
+                        Text(money(p!.price), textDirection: TextDirection.ltr, style: T.bigPrice),
+                        Text(' ${W.currency} / $unit', style: T.heading.copyWith(color: cPrimary)),
+                      ],
                     ),
-                    const SizedBox(height: 8),
-                    Text.rich(
-                      TextSpan(
-                        children: [
-                          TextSpan(
-                            text: money(p!.price),
-                            style: const TextStyle(fontSize: 58, fontWeight: FontWeight.w800, color: cGreen),
-                          ),
-                          const TextSpan(
-                            text: ' د.ك',
-                            style: TextStyle(fontSize: 24, color: cGreen),
-                          ),
-                        ],
-                      ),
-                      textAlign: TextAlign.center,
-                    ),
-                    Text(p!.isKg ? 'للكيلو' : 'للحبة', style: const TextStyle(fontSize: 19, color: cMuted)),
-                    const SizedBox(height: 10),
-                    if (p!.carton > 0) _kv('الكرتون (${p!.carton} حبة)', '${money(p!.price * p!.carton)} د.ك'),
-                    _kv('في المخزن', p!.baseText(p!.stock)),
-                    _kv('الباركود', p!.barcode),
-                  ],
-                ),
+                  ),
+                  const SizedBox(height: S.m),
+                  if (p!.carton > 0) _kv('الكرتون (${p!.carton} حبة)', '${money(p!.price * p!.carton)} ${W.currency}'),
+                  _kv('سعر الشراء', '${money(p!.cost)} ${W.currency} / $unit'),
+                  if (p!.carton > 0) _kv('شراء الكرتون', '${money(p!.cost * p!.carton)} ${W.currency}'),
+                  _kv('الرصيد على الجهاز', p!.baseText(p!.stock)),
+                  _kv('الباركود', p!.barcode),
+                  const SizedBox(height: S.xs),
+                  Text(syncedAgo(app.lastSync), textAlign: TextAlign.center, style: T.sub),
+                ],
               ),
-            ],
+            ),
           ],
-        ),
+        ],
       ),
     );
   }
@@ -81,16 +89,12 @@ class _PriceScreenState extends State<PriceScreen> {
     decoration: const BoxDecoration(
       border: Border(top: BorderSide(color: cLine)),
     ),
-    padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 2),
+    padding: const EdgeInsets.symmetric(vertical: S.s),
     child: Row(
       children: [
-        Expanded(child: Text(k, style: const TextStyle(fontSize: 19))),
+        Expanded(child: Text(k, style: T.sub.copyWith(fontSize: 15))),
         Flexible(
-          child: Text(
-            v,
-            textAlign: TextAlign.left,
-            style: const TextStyle(fontSize: 19, fontWeight: FontWeight.w800),
-          ),
+          child: Text(v, textAlign: TextAlign.left, style: T.label),
         ),
       ],
     ),
