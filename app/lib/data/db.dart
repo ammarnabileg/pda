@@ -17,7 +17,7 @@ class LocalDb {
     final file = path ?? p.join(await f.getDatabasesPath(), 'tamween.db');
     final db = await f.openDatabase(
       file,
-      options: OpenDatabaseOptions(version: 2, onCreate: _create, onUpgrade: _upgrade),
+      options: OpenDatabaseOptions(version: 3, onCreate: _create, onUpgrade: _upgrade),
     );
     return LocalDb(db);
   }
@@ -28,6 +28,17 @@ class LocalDb {
       // Purchase prices only arrive with a full download.
       await db.insert('kv', {'key': 'version', 'value': '0'}, conflictAlgorithm: ConflictAlgorithm.replace);
     }
+    if (from < 3) {
+      await _createBarcodes(db);
+      // Extra barcodes only arrive with a full download.
+      await db.insert('kv', {'key': 'version', 'value': '0'}, conflictAlgorithm: ConflictAlgorithm.replace);
+    }
+  }
+
+  /// More barcodes per product (another piece barcode, or the carton's own).
+  static Future<void> _createBarcodes(Database db) async {
+    await db.execute('CREATE TABLE IF NOT EXISTS barcodes(code TEXT PRIMARY KEY, product_id INTEGER NOT NULL, mode TEXT NOT NULL)');
+    await db.execute('CREATE INDEX IF NOT EXISTS barcodes_product ON barcodes(product_id)');
   }
 
   static Future<void> _create(Database db, int version) async {
@@ -36,6 +47,7 @@ class LocalDb {
       unit TEXT NOT NULL, price INTEGER NOT NULL, cost INTEGER NOT NULL DEFAULT 0, carton INTEGER NOT NULL, stock INTEGER NOT NULL, active INTEGER NOT NULL)''',
     );
     await db.execute('CREATE INDEX products_barcode ON products(barcode)');
+    await _createBarcodes(db);
     await db.execute('''CREATE TABLE employees(id INTEGER PRIMARY KEY, name TEXT NOT NULL, role TEXT NOT NULL,
       pin_salt TEXT NOT NULL, pin_hash TEXT NOT NULL, active INTEGER NOT NULL)''');
     await db.execute('''CREATE TABLE receipts(id INTEGER PRIMARY KEY, supplier TEXT NOT NULL, status TEXT NOT NULL,
@@ -90,12 +102,35 @@ class LocalDb {
     return Product.fromRow(exact.isNotEmpty ? exact.first : r.first);
   }
 
+  /// Any barcode: the main one (piece / kg) or an extra one with its own unit.
+  Future<ScanHit?> lookup(String code) async {
+    final p = await productByBarcode(code);
+    if (p != null) return ScanHit(p, p.isKg ? 'kg' : 'piece');
+    code = code.trim();
+    if (code.isEmpty) return null;
+    final variants = {code, '0$code', if (code.startsWith('0')) code.substring(1)}.toList();
+    final r = await db.rawQuery(
+      'SELECT p.*, b.mode AS scan_mode FROM barcodes b JOIN products p ON p.id = b.product_id '
+      'WHERE p.active = 1 AND b.code IN (${List.filled(variants.length, '?').join(',')})',
+      variants,
+    );
+    if (r.isEmpty) return null;
+    return ScanHit(Product.fromRow(r.first), r.first['scan_mode'] as String);
+  }
+
+  Future<List<String>> barcodesOf(int productId) async {
+    final r = await db.query('barcodes', columns: ['code', 'mode'], where: 'product_id = ?', whereArgs: [productId]);
+    return [for (final x in r) '${x['code']} (${x['mode'] == 'carton' ? 'كرتون' : (x['mode'] == 'kg' ? 'كيلو' : 'حبة')})'];
+  }
+
   Future<List<Product>> searchProducts(String q, {int limit = 40}) async {
     q = q.trim();
     final r = await db.query(
       'products',
-      where: q.isEmpty ? 'active = 1' : 'active = 1 AND (name LIKE ? OR barcode LIKE ?)',
-      whereArgs: q.isEmpty ? null : ['%$q%', '%$q%'],
+      where: q.isEmpty
+          ? 'active = 1'
+          : 'active = 1 AND (name LIKE ? OR barcode LIKE ? OR id IN (SELECT product_id FROM barcodes WHERE code LIKE ?))',
+      whereArgs: q.isEmpty ? null : ['%$q%', '%$q%', '%$q%'],
       orderBy: 'name',
       limit: limit,
     );
@@ -163,11 +198,20 @@ class LocalDb {
       if (data['full'] == true) {
         // A full pull is the server's complete picture: drop what it no longer has.
         batch.delete('products');
+        batch.delete('barcodes');
         batch.delete('employees');
         batch.delete('receipts', where: "status != 'sent'");
       }
       for (final j in (data['products'] as List)) {
         batch.insert('products', Product.fromApi(j).toRow(), conflictAlgorithm: ConflictAlgorithm.replace);
+        batch.delete('barcodes', where: 'product_id = ?', whereArgs: [j['id']]);
+        for (final b in (j['barcodes'] as List?) ?? const []) {
+          batch.insert('barcodes', {
+            'code': b['code'],
+            'product_id': j['id'],
+            'mode': b['mode'],
+          }, conflictAlgorithm: ConflictAlgorithm.replace);
+        }
       }
       for (final j in (data['employees'] as List)) {
         batch.insert('employees', Employee.fromApi(j).toRow(), conflictAlgorithm: ConflictAlgorithm.replace);

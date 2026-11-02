@@ -79,8 +79,9 @@ class _SaleScreenState extends State<SaleScreen> {
     if (_scroll.hasClients) _scroll.animateTo(0, duration: const Duration(milliseconds: 200), curve: Curves.easeOut);
   }
 
-  Future<void> _onProduct(Product? p) async {
-    if (p == null || !mounted) return;
+  Future<void> _onProduct(ScanHit? h) async {
+    if (h == null || !mounted) return;
+    final p = h.product;
     if (p.isKg) {
       final r = await numberPad(
         context,
@@ -93,7 +94,8 @@ class _SaleScreenState extends State<SaleScreen> {
       if (r?.scanned != null) return _onScan(r!.scanned!);
       if (r != null) _add(p, 'kg', r.qty);
     } else {
-      _add(p, 'piece', 1000);
+      // A carton barcode adds one carton; the piece barcode one piece.
+      _add(p, h.mode == 'carton' && p.carton > 0 ? 'carton' : 'piece', 1000);
     }
   }
 

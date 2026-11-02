@@ -6,6 +6,7 @@ import shutil
 import subprocess
 from datetime import date, datetime, time, timedelta
 from decimal import Decimal, InvalidOperation
+from pathlib import Path
 from urllib.parse import urlencode
 from zoneinfo import ZoneInfo
 
@@ -18,7 +19,7 @@ from sqlalchemy.orm import Session
 from . import config, services
 from .db import get_db
 from .models import (
-    MODES, ROLES, UNITS, CountLine, CountSession, Device, Employee, Product, Receipt, ReceiptLine,
+    MODES, ROLES, UNITS, CountLine, CountSession, Device, Employee, Product, ProductBarcode, Receipt, ReceiptLine,
     Sale, SaleLine, StockMove, Supplier, now,
 )
 from .security import hash_password, hash_pin, new_pairing_code, verify_password, verify_pin
@@ -188,15 +189,18 @@ def home(request: Request, user=Depends(current_user), db: Session = Depends(get
     start, end = local_day_range(today, today)
     sales_today = db.execute(select(func.count(Sale.id), func.coalesce(func.sum(Sale.total), 0))
                              .where(Sale.created_at >= start, Sale.created_at < end)).one()
-    low = db.scalars(select(Product).where(Product.active.is_(True), Product.stock <= Product.min_stock,
-                                           Product.min_stock > 0).order_by(Product.name).limit(10)).all()
+    low_q = select(Product).where(Product.active.is_(True), Product.stock <= Product.min_stock, Product.min_stock > 0)
+    devices = db.scalars(select(Device).where(Device.active.is_(True)).order_by(Device.name)).all()
+    t = now()
+    stale = [d for d in devices if d.token_hash and (not d.last_seen or t - d.last_seen > timedelta(hours=1))]
     ctx = {
         "sales_count": sales_today[0], "sales_total": sales_today[1],
         "open_receipts": db.scalar(select(func.count()).select_from(Receipt).where(Receipt.status == "open")),
         "pending_counts": db.scalar(select(func.count()).select_from(CountSession).where(CountSession.status == "submitted")),
+        "low_count": db.scalar(select(func.count()).select_from(low_q.subquery())),
+        "low": db.scalars(low_q.order_by(Product.name).limit(10)).all(),
         "products": db.scalar(select(func.count()).select_from(Product).where(Product.active.is_(True))),
-        "devices": db.scalars(select(Device).where(Device.active.is_(True)).order_by(Device.name)).all(),
-        "low": low, "now": now(),
+        "devices": devices, "stale": stale, "now": t,
         "recent": db.scalars(select(Sale).order_by(Sale.created_at.desc()).limit(8)).all(),
     }
     return render(request, "home.html", ctx)
@@ -204,45 +208,91 @@ def home(request: Request, user=Depends(current_user), db: Session = Depends(get
 
 # ---------- products ----------
 
+PAGE_SIZE = 100
+
+
 @router.get("/products", response_class=HTMLResponse)
-def products(request: Request, q: str = "", low: int = 0, inactive: int = 0, user=Depends(current_user), db: Session = Depends(get_db)):
+def products(request: Request, q: str = "", status: str = "active", low: int = 0, unit: str = "", page: int = 1,
+             user=Depends(current_user), db: Session = Depends(get_db)):
     stmt = select(Product)
-    if not inactive:
+    if status == "active":
         stmt = stmt.where(Product.active.is_(True))
+    elif status == "inactive":
+        stmt = stmt.where(Product.active.is_(False))
     if q.strip():
         like = f"%{q.strip()}%"
-        stmt = stmt.where(or_(Product.name.ilike(like), Product.barcode.ilike(like)))
+        extra = select(ProductBarcode.product_id).where(ProductBarcode.code.ilike(like))
+        stmt = stmt.where(or_(Product.name.ilike(like), Product.barcode.ilike(like), Product.id.in_(extra)))
     if low:
         stmt = stmt.where(Product.stock <= Product.min_stock, Product.min_stock > 0)
-    items = db.scalars(stmt.order_by(Product.name).limit(500)).all()
-    return render(request, "products.html", {"items": items, "q": q, "low": low, "inactive": inactive})
+    if unit in UNITS:
+        stmt = stmt.where(Product.unit == unit)
+    total = db.scalar(select(func.count()).select_from(stmt.subquery()))
+    pages = max(1, -(-total // PAGE_SIZE))
+    page = min(max(1, page), pages)
+    items = db.scalars(stmt.order_by(Product.name).offset((page - 1) * PAGE_SIZE).limit(PAGE_SIZE)).all()
+    params = {"q": q, "status": status, "low": low or "", "unit": unit}
+    return render(request, "products.html", {
+        "items": items, "total": total, "page": page, "pages": pages, **params,
+        "page_url": lambda n: "/products?" + urlencode({**{k: v for k, v in params.items() if v}, "page": n}),
+        "filtered": bool(q.strip() or low or unit or status != "active"),
+    })
 
 
-def product_errors(db, p_id, f):
-    errors = []
+def form_barcodes(f):
+    """Extra barcode rows posted by the form: [(code, mode)], blanks skipped."""
+    rows = []
+    for code, mode in zip(f.getlist("xb_code"), f.getlist("xb_mode")):
+        code = str(code).strip()
+        if code:
+            rows.append((code, str(mode)))
+    return rows
+
+
+def product_errors(db, p_id, f, extra=()):
+    """Errors keyed by field, so the form can show each one next to its input."""
+    errors = {}
     barcode, name = str(f.get("barcode", "")).strip(), str(f.get("name", "")).strip()
     if not barcode or not barcode.isalnum():
-        errors.append("الباركود مطلوب (أرقام أو حروف بدون مسافات)")
-    elif db.scalar(select(Product.id).where(Product.barcode == barcode, Product.id != (p_id or 0))):
-        errors.append("الباركود ده مستخدم لصنف تاني")
+        errors["barcode"] = "الباركود مطلوب (أرقام أو حروف بدون مسافات)"
+    else:
+        other = services.code_taken(db, barcode, p_id)
+        if other:
+            errors["barcode"] = f"الباركود ده مستخدم للصنف: {other}"
     if not name:
-        errors.append("اسم الصنف مطلوب")
-    if f.get("unit") not in UNITS:
-        errors.append("اختار الوحدة")
+        errors["name"] = "اسم الصنف مطلوب"
+    unit = f.get("unit")
+    if unit not in UNITS:
+        errors["unit"] = "اختار الوحدة"
     price, cost = dec(f.get("price")), dec(f.get("cost") or 0)
     if price is None or price < 0:
-        errors.append("سعر البيع غلط")
+        errors["price"] = "سعر البيع لازم يكون رقم، مثال 1.250"
     if cost is None or cost < 0:
-        errors.append("سعر الشراء غلط")
+        errors["cost"] = "سعر الشراء لازم يكون رقم، مثال 0.950"
     carton = str(f.get("carton") or "0").strip()
-    if not carton.isdigit():
-        errors.append("عدد الحبات في الكرتون لازم يكون رقم صحيح")
+    if unit != "kg" and not carton.isdigit():
+        errors["carton"] = "عدد الحبات في الكرتون لازم يكون رقم صحيح (أو 0)"
     if dec(f.get("min_stock") or 0) is None:
-        errors.append("حد الطلب غلط")
+        errors["min_stock"] = "حد الطلب لازم يكون رقم"
+    seen = {barcode}
+    for code, mode in extra:
+        if not code.isalnum():
+            errors["barcodes"] = f"الباركود {code}: أرقام أو حروف بدون مسافات"
+        elif code in seen:
+            errors["barcodes"] = f"الباركود {code} متكرر في نفس الصنف"
+        elif (other := services.code_taken(db, code, p_id)):
+            errors["barcodes"] = f"الباركود {code} مستخدم للصنف: {other}"
+        elif unit == "kg" and mode != "kg":
+            errors["barcodes"] = "الصنف بالكيلو: كل الباركودات بتاعته بالكيلو"
+        elif unit != "kg" and mode not in ("piece", "carton"):
+            errors["barcodes"] = f"الباركود {code}: اختار حبة أو كرتون"
+        elif mode == "carton" and not (carton.isdigit() and int(carton) > 0):
+            errors["barcodes"] = "عشان تضيف باركود كرتون، اكتب عدد الحبات في الكرتون الأول"
+        seen.add(code)
     return errors
 
 
-def apply_product_form(p: Product, f):
+def apply_product_form(db, p: Product, f, extra):
     p.barcode = str(f.get("barcode")).strip()
     p.name = str(f.get("name")).strip()
     p.unit = f.get("unit")
@@ -251,31 +301,50 @@ def apply_product_form(p: Product, f):
     p.carton = 0 if p.unit == "kg" else int(str(f.get("carton") or "0").strip())
     p.min_stock = services.d3(dec(f.get("min_stock") or 0))
     p.active = f.get("active") == "1"
+    # Update in place: removing and re-adding the same code in one save would hit the unique index.
+    wanted = dict(extra)
+    for b in list(p.extra_barcodes):
+        if b.code in wanted:
+            b.mode = wanted.pop(b.code)
+        else:
+            p.extra_barcodes.remove(b)
+    db.flush()
+    for code, mode in wanted.items():
+        p.extra_barcodes.append(ProductBarcode(code=code, mode=mode))
+
+
+def form_ctx(p, form, errors=None, moves=None):
+    if form is not None:
+        barcodes = form_barcodes(form) if hasattr(form, "getlist") else []
+    else:
+        barcodes = [(b.code, b.mode) for b in p.extra_barcodes] if p else []
+    return {"p": p, "form": form, "errors": errors or {}, "moves": moves or [], "barcodes": barcodes}
 
 
 @router.get("/products/new", response_class=HTMLResponse)
 def product_new(request: Request, user=Depends(current_user)):
-    return render(request, "product_form.html", {"p": None, "form": {"unit": "piece", "active": "1"}})
+    return render(request, "product_form.html", form_ctx(None, {"unit": "piece", "active": "1", "carton": "0", "cost": "0", "min_stock": "0", "stock": "0"}))
 
 
 @router.post("/products/new")
 async def product_create(request: Request, user=Depends(current_user), db: Session = Depends(get_db)):
     f = await request.form()
-    errors = product_errors(db, None, f)
+    extra = form_barcodes(f)
+    errors = product_errors(db, None, f, extra)
     opening = dec(f.get("stock") or 0)
     if opening is None or opening < 0:
-        errors.append("الرصيد الافتتاحي غلط")
+        errors["stock"] = "الرصيد الافتتاحي لازم يكون رقم"
     if errors:
-        return render(request, "product_form.html", {"p": None, "form": f, "errors": errors}, 400)
+        return render(request, "product_form.html", form_ctx(None, f, errors), 400)
     p = Product(stock=0)
-    apply_product_form(p, f)
-    services.bump(db, p)
     db.add(p)
+    apply_product_form(db, p, f, extra)
+    services.bump(db, p)
     db.flush()
     services.move_stock(db, p, opening, "manual", note="رصيد افتتاحي", employee_id=user.id)
     db.commit()
     flash(request, f"تمت إضافة {p.name}")
-    return redirect(f"/products/{p.id}")
+    return redirect("/products/new" if f.get("next") == "new" else f"/products/{p.id}")
 
 
 @router.get("/products/{pid}", response_class=HTMLResponse)
@@ -284,7 +353,7 @@ def product_detail(pid: int, request: Request, user=Depends(current_user), db: S
     if not p:
         return redirect("/products")
     moves = db.scalars(select(StockMove).where(StockMove.product_id == pid).order_by(StockMove.created_at.desc()).limit(50)).all()
-    return render(request, "product_form.html", {"p": p, "form": None, "moves": moves})
+    return render(request, "product_form.html", form_ctx(p, None, moves=moves))
 
 
 @router.post("/products/{pid}")
@@ -293,13 +362,14 @@ async def product_update(pid: int, request: Request, user=Depends(current_user),
     if not p:
         return redirect("/products")
     f = await request.form()
-    errors = product_errors(db, pid, f)
+    extra = form_barcodes(f)
+    errors = product_errors(db, pid, f, extra)
     if errors:
-        return render(request, "product_form.html", {"p": p, "form": f, "errors": errors, "moves": []}, 400)
-    apply_product_form(p, f)
+        return render(request, "product_form.html", form_ctx(p, f, errors), 400)
+    apply_product_form(db, p, f, extra)
     services.bump(db, p)
     db.commit()
-    flash(request, "تم حفظ الصنف")
+    flash(request, f"تم حفظ {p.name}")
     return redirect(f"/products/{pid}")
 
 
@@ -318,7 +388,7 @@ async def product_stock(pid: int, request: Request, user=Depends(current_user), 
     return redirect(f"/products/{pid}")
 
 
-IMPORT_COLUMNS = ["barcode", "name", "unit", "price", "cost", "carton", "stock", "min_stock"]
+IMPORT_COLUMNS = ["barcode", "name", "unit", "price", "cost", "carton", "stock", "min_stock", "carton_barcode", "extra_barcodes"]
 
 
 @router.get("/products-import", response_class=HTMLResponse)
@@ -328,7 +398,9 @@ def import_form(request: Request, user=Depends(current_user)):
 
 @router.get("/products-import/template.csv")
 def import_template(user=Depends(current_user)):
-    body = ",".join(IMPORT_COLUMNS) + "\n6281000123456,أرز بسمتي ٥ كجم,piece,2.450,2.050,6,48,10\n2100000012345,سكر أبيض,kg,0.350,0.280,0,125,20\n"
+    body = (",".join(IMPORT_COLUMNS) + "\n"
+            "6281000123456,أرز بسمتي ٥ كجم,piece,2.450,2.050,6,48,10,16281000123453,6281000123999\n"
+            "2100000012345,سكر أبيض,kg,0.350,0.280,0,125,20,,\n")
     return Response("﻿" + body, media_type="text/csv; charset=utf-8",
                     headers={"Content-Disposition": "attachment; filename=products-template.csv"})
 
@@ -356,7 +428,11 @@ async def import_products(request: Request, user=Depends(current_user), db: Sess
         row.setdefault("unit", "piece")
         row["active"] = "1"
         existing = db.scalar(select(Product).where(Product.barcode == row.get("barcode", "")))
-        errs = product_errors(db, existing.id if existing else None, row)
+        extra = [(c, "carton") for c in [row.get("carton_barcode", "")] if c]
+        extra += [(c.strip(), "kg" if row["unit"] == "kg" else "piece") for c in row.get("extra_barcodes", "").replace("|", " ").split() if c.strip()]
+        if existing:  # keep barcodes the file does not mention
+            extra = [(b.code, b.mode) for b in existing.extra_barcodes if b.code not in dict(extra)] + extra
+        errs = list(product_errors(db, existing.id if existing else None, row, extra).values())
         stock = dec(row.get("stock")) if row.get("stock") else None
         if row.get("stock") and (stock is None or stock < 0):
             errs.append("الرصيد غلط")
@@ -366,7 +442,7 @@ async def import_products(request: Request, user=Depends(current_user), db: Sess
         p = existing or Product(stock=0)
         if not existing:
             db.add(p)
-        apply_product_form(p, row)
+        apply_product_form(db, p, row, extra)
         services.bump(db, p)
         db.flush()
         if stock is not None:
@@ -430,8 +506,7 @@ def parse_receipt_lines(db, f):
         prod, qty_s = prod.strip(), qty.strip()
         if not prod and not qty_s:
             continue
-        barcode = prod.split(" ")[0]
-        p = db.scalar(select(Product).where(Product.barcode == barcode))
+        p, _ = services.find_by_code(db, prod.split(" ")[0])
         q = dec(qty_s)
         if not p:
             errors.append(f"سطر {i}: الصنف غير موجود")
@@ -613,7 +688,11 @@ def count_detail(cid: str, request: Request, user=Depends(current_user), db: Ses
     if not c:
         return redirect("/counts")
     value = sum((l.diff * l.product.cost for l in c.lines), Decimal(0))
-    return render(request, "count.html", {"c": c, "value": value})
+    stats = {"all": len(c.lines), "same": sum(1 for l in c.lines if l.diff == 0),
+             "short": sum(1 for l in c.lines if l.diff < 0), "over": sum(1 for l in c.lines if l.diff > 0)}
+    only = request.query_params.get("only") == "diff"
+    lines = [l for l in c.lines if not only or l.diff != 0]
+    return render(request, "count.html", {"c": c, "value": value, "stats": stats, "lines": lines, "only": only})
 
 
 @router.post("/counts/{cid}/{action}")
@@ -767,7 +846,17 @@ def pg_dump_cmd():
 
 @router.get("/backup", response_class=HTMLResponse)
 def backup_page(request: Request, user=Depends(admin_user)):
-    return render(request, "backup.html", {"available": bool(pg_dump_cmd())})
+    log = Path(config.BACKUP_DIR) / "backup.log"
+    entries = []
+    if log.exists():
+        for line in log.read_text(encoding="utf-8", errors="replace").splitlines()[-200:]:
+            when, _, rest = line.partition("  ")
+            status, _, detail = rest.strip().partition(" ")
+            entries.append({"when": when, "ok": status == "OK", "detail": detail.strip()})
+    last_ok = next((e for e in reversed(entries) if e["ok"]), None)
+    last = entries[-1] if entries else None
+    return render(request, "backup.html", {"available": bool(pg_dump_cmd()), "dir": config.BACKUP_DIR,
+                                           "last_ok": last_ok, "last": last, "recent": list(reversed(entries[-10:]))})
 
 
 @router.get("/backup/download")

@@ -6,7 +6,9 @@
   <div><label>إلى</label><input type="date" name="d_to" value="{{ d_to }}"></div>
   <div><label>الموظف</label><select name="employee"><option value="0">الكل</option>{% for e in employees %}<option value="{{ e.id }}" {{ 'selected' if e.id == employee }}>{{ e.name }}</option>{% endfor %}</select></div>
   <button class="btn" style="align-self:end">عرض</button>
+  <a class="btn light" style="align-self:end" href="/sales">النهارده</a>
 </form>
+<div class="range">الفترة: من {{ d_from }} إلى {{ d_to }}{% if employee %} · موظف واحد{% endif %}{% if items|length == 1000 %} · <span class="neg">بيظهر أول 1000 فاتورة بس، صغّر الفترة</span>{% endif %}</div>
 <div class="stats"><div class="stat"><small>عدد الفواتير</small><b>{{ items|length }}</b></div><div class="stat"><small>الإجمالي</small><b>{{ total|money }}</b> د.ك</div></div>
 <div class="table-wrap"><table><tr><th>الوقت</th><th>الموظف</th><th>الجهاز</th><th>الأصناف</th><th class="num">المبلغ</th></tr>
 {% for s in items %}<tr><td><a href="/sales/{{ s.id }}">{{ s.created_at|dt }}</a></td><td>{{ s.employee.name if s.employee else '—' }}</td><td>{{ s.device.name }}</td><td>{{ s.lines|length }}</td><td class="num">{{ s.total|money }}</td></tr>

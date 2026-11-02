@@ -43,8 +43,8 @@ class _HomeScreenState extends State<HomeScreen> {
 
   Future<void> _onScan(String code) async {
     final app = AppScope.read(context);
-    final p = await findScanned(context, app, code);
-    if (p != null && mounted) _open(PriceScreen(initial: p));
+    final h = await findScanned(context, app, code);
+    if (h != null && mounted) _open(PriceScreen(initial: h));
   }
 
   Future<void> _switchUser() async {

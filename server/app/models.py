@@ -72,12 +72,28 @@ class Product(Base):
     version: Mapped[int] = mapped_column(BigInteger, default=0, index=True)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now, onupdate=now)
 
+    extra_barcodes: Mapped[list["ProductBarcode"]] = relationship(
+        back_populates="product", cascade="all, delete-orphan", order_by="ProductBarcode.id"
+    )
+
     def to_base(self, qty, mode):
         qty = Decimal(str(qty))
         return qty * self.carton if mode == "carton" else qty
 
     def unit_price(self, mode):
         return self.price * self.carton if mode == "carton" else self.price
+
+
+class ProductBarcode(Base):
+    """More barcodes for one product: another piece barcode, or the carton's own barcode.
+    The product's main barcode stays in products.barcode."""
+    __tablename__ = "product_barcodes"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    product_id: Mapped[int] = mapped_column(ForeignKey("products.id", ondelete="CASCADE"), index=True)
+    code: Mapped[str] = mapped_column(String(40), unique=True)
+    mode: Mapped[str] = mapped_column(String(10), default="piece")  # piece | carton | kg
+    note: Mapped[str | None] = mapped_column(String(80))
+    product: Mapped["Product"] = relationship(back_populates="extra_barcodes")
 
 
 class StockMove(Base):

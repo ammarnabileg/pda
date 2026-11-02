@@ -52,8 +52,9 @@ class _ReceiveListScreenState extends State<ReceiveListScreen> {
   /// Scanning here opens the voucher that contains the item, straight on its quantity.
   Future<void> _onScan(String code) async {
     final app = AppScope.read(context);
-    final p = await findScanned(context, app, code);
-    if (p == null || !mounted) return;
+    final h = await findScanned(context, app, code);
+    if (h == null || !mounted) return;
+    final p = h.product;
     final having = (items ?? []).where((r) => r.lines.any((l) => l.productId == p.id)).toList();
     if (having.length == 1) {
       await Navigator.of(context).push(
@@ -246,7 +247,7 @@ class _ReceiveScreenState extends State<ReceiveScreen> {
     return '${qty(base, 'piece')} حبة';
   }
 
-  Future<void> _qty(int pid, {bool isExtra = false}) async {
+  Future<void> _qty(int pid, {bool isExtra = false, String? scannedMode}) async {
     final p = products[pid]!;
     final l = _line(pid);
     final cur = recv[pid];
@@ -257,7 +258,8 @@ class _ReceiveScreenState extends State<ReceiveScreen> {
           ? 'المطلوب: ${qtyText(l.ordered, l.mode)} — اكتب اللي وصل فعلاً (صفر لو ماوصلش)'
           : 'صنف مش في السند — اكتب الكمية اللي وصلت',
       modes: p.modes,
-      mode: cur?.mode ?? l?.mode ?? p.modes.first,
+      // Only a carton barcode changes the unit; the item's normal barcode keeps the ordered unit.
+      mode: cur?.mode ?? (scannedMode == 'carton' && p.carton > 0 ? 'carton' : null) ?? l?.mode ?? p.modes.first,
       initial: cur?.qty,
       allowZero: l != null,
       carton: p.carton,
@@ -287,10 +289,11 @@ class _ReceiveScreenState extends State<ReceiveScreen> {
     _save();
   }
 
-  Future<void> _onProduct(Product? p) async {
-    if (p == null || !mounted) return;
+  Future<void> _onProduct(ScanHit? h) async {
+    if (h == null || !mounted) return;
+    final p = h.product;
     products[p.id] = p;
-    if (_line(p.id) != null || extra.contains(p.id)) return _qty(p.id);
+    if (_line(p.id) != null || extra.contains(p.id)) return _qty(p.id, scannedMode: h.mode);
     beepError();
     final ok = await confirmSheet(
       context,
@@ -300,18 +303,18 @@ class _ReceiveScreenState extends State<ReceiveScreen> {
       no: 'إلغاء',
       danger: true,
     );
-    if (ok) await _qty(p.id, isExtra: true);
+    if (ok) await _qty(p.id, isExtra: true, scannedMode: h.mode);
   }
 
   Future<void> _onScan(String code) async {
     final app = AppScope.read(context);
-    final p = await app.db.productByBarcode(code);
-    if (p == null) {
+    final h = await app.db.lookup(code);
+    if (h == null) {
       if (mounted) await _onProduct(await findScanned(context, app, code));
       return;
     }
-    if (_line(p.id) != null || extra.contains(p.id)) beepOk();
-    await _onProduct(p);
+    if (_line(h.product.id) != null || extra.contains(h.product.id)) beepOk();
+    await _onProduct(h);
   }
 
   Future<void> _finish() async {

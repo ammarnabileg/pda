@@ -1,41 +1,124 @@
 {% extends "base.html" %}{% block title %}{{ p.name if p else 'صنف جديد' }}{% endblock %}
 {% block content %}
-{% macro v(field, default='') %}{% if form %}{{ form.get(field, default) or '' }}{% elif p %}{{ p[field] }}{% else %}{{ default }}{% endif %}{% endmacro %}
+{% macro v(field, default='') %}{% if form %}{{ form.get(field, default) or '' }}{% elif p and field in ('min_stock', 'stock') %}{{ p[field]|qty(p.unit) }}{% elif p %}{{ p[field] }}{% else %}{{ default }}{% endif %}{% endmacro %}
+{% macro err(field) %}{% if errors.get(field) %}<div class="err" id="err-{{ field }}">{{ errors[field] }}</div>{% endif %}{% endmacro %}
+{% macro fcls(field) %}field{{ ' has-err' if errors.get(field) }}{% endmacro %}
 <div class="bar"><h1>{{ p.name if p else 'صنف جديد' }}</h1><a class="btn light" href="/products">رجوع للأصناف</a></div>
-{% include "_errors.html" %}
-<form method="post" action="{{ '/products/%d' % p.id if p else '/products/new' }}" class="card">
-  <div class="grid">
-    <div class="field"><label>الباركود</label><input name="barcode" value="{{ v('barcode') }}" required dir="ltr" autofocus><div class="hint">امسحه بقارئ الباركود أو اكتبه</div></div>
-    <div class="field"><label>اسم الصنف</label><input name="name" value="{{ v('name') }}" required></div>
-    <div class="field"><label>الوحدة</label>
-      {% set unit = (form.get('unit') if form else (p.unit if p else 'piece')) %}
-      <select name="unit" id="unit"><option value="piece" {{ 'selected' if unit == 'piece' }}>بالحبة</option><option value="kg" {{ 'selected' if unit == 'kg' }}>بالكيلو (موزون)</option></select></div>
-    <div class="field" id="carton-field"><label>عدد الحبات في الكرتون</label><input name="carton" value="{{ v('carton', '0') }}" inputmode="numeric"><div class="hint">0 لو الصنف مالوش كرتون</div></div>
-    <div class="field"><label>سعر البيع (د.ك)</label><input name="price" value="{{ v('price') }}" inputmode="decimal" required dir="ltr"></div>
-    <div class="field"><label>سعر الشراء (د.ك)</label><input name="cost" value="{{ v('cost', '0') }}" inputmode="decimal" dir="ltr"><div class="hint">لا يظهر على أجهزة الكاشير</div></div>
-    <div class="field"><label>حد الطلب</label><input name="min_stock" value="{{ v('min_stock', '0') }}" inputmode="decimal" dir="ltr"><div class="hint">ينبهك لما الرصيد يوصل له</div></div>
-    {% if not p %}<div class="field"><label>الرصيد الافتتاحي</label><input name="stock" value="{{ v('stock', '0') }}" inputmode="decimal" dir="ltr"></div>{% endif %}
+{% if errors %}<div class="alert error" role="alert">فيه {{ errors|length }} {{ 'خانة محتاجة' if errors|length == 1 else 'خانات محتاجة' }} تصليح، معلّمة باللون الأحمر تحت.</div>{% endif %}
+{% set unit = (form.get('unit') if form else (p.unit if p else 'piece')) %}
+<form method="post" action="{{ '/products/%d' % p.id if p else '/products/new' }}" id="pform">
+  <fieldset>
+    <legend>١. بيانات الصنف</legend>
+    <div class="grid">
+      <div class="{{ fcls('name') }}" style="grid-column:1/-1"><label for="name">اسم الصنف</label><input id="name" name="name" value="{{ v('name') }}" required {{ 'autofocus' if not p }}>{{ err('name') }}
+        <div class="hint">اكتب الحجم أو العبوة في الاسم لو فيه أصناف شبه بعض، مثال: أرز بسمتي ٥ كجم</div></div>
+    </div>
+    {% set active = (form.get('active') == '1' if form else (p.active if p else True)) %}
+    <label class="check" style="margin:0 0 12px"><input type="checkbox" name="active" value="1" {{ 'checked' if active }}> الصنف فعّال (بيظهر على الأجهزة)</label>
+  </fieldset>
+
+  <fieldset>
+    <legend>٢. الوحدة والباركود</legend>
+    <div class="grid">
+      <div class="{{ fcls('unit') }}"><label for="unit">بيتباع</label>
+        <select name="unit" id="unit"><option value="piece" {{ 'selected' if unit == 'piece' }}>بالحبة</option><option value="kg" {{ 'selected' if unit == 'kg' }}>بالكيلو (موزون)</option></select>{{ err('unit') }}</div>
+      <div class="{{ fcls('carton') }}" id="carton-field"><label for="carton">عدد الحبات في الكرتون</label><input id="carton" name="carton" value="{{ v('carton', '0') }}" inputmode="numeric">{{ err('carton') }}<div class="hint">0 لو الصنف مالوش كرتون</div></div>
+      <div class="{{ fcls('barcode') }}"><label for="barcode">الباركود الأساسي (<span id="main-unit">{{ 'الكيلو' if unit == 'kg' else 'الحبة' }}</span>)</label><input id="barcode" name="barcode" value="{{ v('barcode') }}" required dir="ltr">{{ err('barcode') }}<div class="hint">امسحه بقارئ الباركود أو اكتبه</div></div>
+    </div>
+    <label>باركودات تانية للصنف ده</label>
+    <div class="hint" style="margin-bottom:6px">مثلاً باركود الكرتون، أو باركود تاني لنفس الحبة من مورد مختلف. لما الموظف يمسح باركود الكرتون، الجهاز بيسجّله كرتون على طول.</div>
+    <div class="{{ fcls('barcodes') }}">
+    <div class="table-wrap" style="max-height:none"><table id="xb">
+      <thead><tr><th>الباركود</th><th>بيمثّل</th><th></th></tr></thead>
+      <tbody>
+      {% for code, mode in barcodes %}
+      <tr><td><input name="xb_code" value="{{ code }}" dir="ltr" aria-label="الباركود"></td>
+        <td><select name="xb_mode" aria-label="بيمثّل">{% for k, l in [("piece", "حبة"), ("carton", "كرتون"), ("kg", "كيلو")] %}<option value="{{ k }}" {{ 'selected' if k == mode }}>{{ l }}</option>{% endfor %}</select></td>
+        <td><button type="button" class="btn small light" onclick="this.closest('tr').remove()">حذف</button></td></tr>
+      {% endfor %}
+      </tbody>
+    </table></div>
+    {{ err('barcodes') }}
+    </div>
+    <button type="button" class="btn light small" onclick="addBarcode()" style="margin-bottom:12px">+ باركود تاني</button>
+    <template id="xb-row"><tr><td><input name="xb_code" dir="ltr" aria-label="الباركود"></td>
+      <td><select name="xb_mode" aria-label="بيمثّل"><option value="piece">حبة</option><option value="carton">كرتون</option><option value="kg">كيلو</option></select></td>
+      <td><button type="button" class="btn small light" onclick="this.closest('tr').remove()">حذف</button></td></tr></template>
+  </fieldset>
+
+  <fieldset>
+    <legend>٣. الأسعار (د.ك)</legend>
+    <div class="grid">
+      <div class="{{ fcls('price') }}"><label for="price">سعر البيع <span class="per-unit">{{ 'للكيلو' if unit == 'kg' else 'للحبة' }}</span></label><input id="price" name="price" value="{{ v('price') }}" inputmode="decimal" required dir="ltr">{{ err('price') }}</div>
+      <div class="{{ fcls('cost') }}"><label for="cost">سعر الشراء <span class="per-unit">{{ 'للكيلو' if unit == 'kg' else 'للحبة' }}</span></label><input id="cost" name="cost" value="{{ v('cost', '0') }}" inputmode="decimal" dir="ltr">{{ err('cost') }}</div>
+    </div>
+    <div class="preview" id="preview" aria-live="polite"></div>
+  </fieldset>
+
+  <fieldset>
+    <legend>٤. الرصيد وحد الطلب</legend>
+    <div class="grid">
+      {% if not p %}<div class="{{ fcls('stock') }}"><label for="stock">الرصيد الحالي (<span class="base-unit">حبة</span>)</label><input id="stock" name="stock" value="{{ v('stock', '0') }}" inputmode="decimal" dir="ltr">{{ err('stock') }}</div>{% endif %}
+      <div class="{{ fcls('min_stock') }}"><label for="min_stock">حد الطلب (<span class="base-unit">حبة</span>)</label><input id="min_stock" name="min_stock" value="{{ v('min_stock', '0') }}" inputmode="decimal" dir="ltr">{{ err('min_stock') }}<div class="hint">لما الرصيد يوصل له، الصنف بيظهر في «تحت حد الطلب»</div></div>
+    </div>
+  </fieldset>
+
+  <div class="bar">
+    <button class="btn">حفظ</button>
+    {% if not p %}<button class="btn light" name="next" value="new">حفظ وإضافة صنف تاني</button>{% endif %}
   </div>
-  {% set active = (form.get('active') == '1' if form else (p.active if p else True)) %}
-  <label class="check" style="margin:6px 0 14px"><input type="checkbox" name="active" value="1" {{ 'checked' if active }}> الصنف فعّال (يظهر على الأجهزة)</label>
-  <button class="btn">حفظ</button>
 </form>
+
 {% if p %}
 <h2>الرصيد: {{ base_text(p, p.stock) }}</h2>
 <form method="post" action="/products/{{ p.id }}/stock" class="card bar">
-  <div style="flex:1;min-width:150px"><label>الرصيد الصحيح</label><input name="stock" inputmode="decimal" dir="ltr" required></div>
-  <div style="flex:2;min-width:200px"><label>السبب</label><input name="note" placeholder="مثال: تالف، هدية، تصحيح" required></div>
+  <div style="flex:1;min-width:150px"><label for="nstock">الرصيد الصحيح ({{ 'كجم' if p.unit == 'kg' else 'حبة' }})</label><input id="nstock" name="stock" inputmode="decimal" dir="ltr" required></div>
+  <div style="flex:2;min-width:200px"><label for="note">السبب</label><input id="note" name="note" placeholder="مثال: تالف، هدية، تصحيح" required></div>
   <button class="btn light" style="align-self:end">تعديل الرصيد يدوياً</button>
 </form>
 <h2>آخر حركات المخزون</h2>
-<div class="table-wrap"><table><tr><th>الوقت</th><th>النوع</th><th class="num">الكمية</th><th>مرجع / ملاحظة</th></tr>
+<div class="table-wrap"><table><thead><tr><th>الوقت</th><th>النوع</th><th class="num">الكمية</th><th>مرجع / ملاحظة</th></tr></thead>
 {% set reasons = {"sale": "بيع", "receipt": "استلام", "count": "جرد", "manual": "يدوي"} %}
-{% for m in moves %}<tr><td>{{ m.created_at|dt }}</td><td>{{ reasons[m.reason] }}</td><td class="num {{ 'neg' if m.delta < 0 else 'pos' }}">{{ m.delta|qty(p.unit) }}</td><td>{{ m.note or m.ref or '' }}</td></tr>
+{% for m in moves %}<tr><td>{{ m.created_at|dt }}</td><td>{{ reasons[m.reason] }}</td><td class="num {{ 'neg' if m.delta < 0 else 'pos' }}">{{ m.delta|qty(p.unit) }}</td><td>{% if m.reason == 'sale' and m.ref %}<a href="/sales/{{ m.ref }}">فاتورة {{ m.ref[:8] }}</a>{% elif m.reason == 'receipt' and m.ref %}<a href="/receipts/{{ m.ref[2:] }}">سند {{ m.ref[2:] }}</a>{% else %}{{ m.note or m.ref or '' }}{% endif %}</td></tr>
 {% else %}<tr><td colspan="4" class="muted">لا توجد حركات</td></tr>{% endfor %}
 </table></div>
 {% endif %}
 <script>
-const u=document.getElementById('unit'),c=document.getElementById('carton-field');
-function sync(){c.style.display=u.value==='kg'?'none':''}u.addEventListener('change',sync);sync()
+const $ = id => document.getElementById(id)
+const unitSel = $('unit'), cartonField = $('carton-field')
+function fmt(n) { return isFinite(n) ? n.toFixed(3) : '—' }
+function addBarcode() {
+  const row = $('xb-row').content.cloneNode(true)
+  const sel = row.querySelector('select')
+  sel.value = unitSel.value === 'kg' ? 'kg' : (Number($('carton').value) > 0 ? 'carton' : 'piece')
+  document.querySelector('#xb tbody').appendChild(row)
+  document.querySelector('#xb tbody tr:last-child input').focus()
+}
+function sync() {
+  const kg = unitSel.value === 'kg'
+  cartonField.style.display = kg ? 'none' : ''
+  $('main-unit').textContent = kg ? 'الكيلو' : 'الحبة'
+  document.querySelectorAll('.per-unit').forEach(e => e.textContent = kg ? 'للكيلو' : 'للحبة')
+  document.querySelectorAll('.base-unit').forEach(e => e.textContent = kg ? 'كجم' : 'حبة')
+  const price = parseFloat($('price').value), cost = parseFloat($('cost').value || '0'), carton = parseInt($('carton').value || '0')
+  let t = ''
+  if (isFinite(price) && price > 0) {
+    t = 'البيع: ' + fmt(price) + (kg ? ' للكيلو' : ' للحبة')
+    if (!kg && carton > 0) t += ' · الكرتون (' + carton + ' حبة): ' + fmt(price * carton) + ' بيع / ' + fmt(cost * carton) + ' شراء'
+    if (cost > 0) t += ' · الربح ' + fmt(price - cost) + ' (' + ((price - cost) / price * 100).toFixed(0) + '%)'
+  }
+  $('preview').textContent = t
+  $('preview').style.display = t ? '' : 'none'
+}
+['unit', 'price', 'cost', 'carton'].forEach(id => $(id).addEventListener('input', sync))
+unitSel.addEventListener('change', sync)
+sync()
+// Scanners send Enter after the code: move on instead of submitting the form.
+document.getElementById('pform').addEventListener('keydown', e => {
+  if (e.key === 'Enter' && e.target.matches('input[name=barcode], input[name=xb_code]')) {
+    e.preventDefault()
+    if (e.target.name === 'xb_code') addBarcode()
+  }
+})
 </script>
 {% endblock %}

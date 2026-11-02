@@ -5,16 +5,22 @@
 <div class="card" style="text-align:center">
   <p>على جهاز <b>{{ d.name }}</b>: افتح التطبيق، اكتب عنوان السيرفر وبعدين الكود ده:</p>
   <div class="code">{{ d.pairing_code }}</div>
-  <p class="muted">الكود صالح {{ 30 }} دقيقة ولمرة واحدة.</p>
+  <p class="muted">الكود صالح لمرة واحدة، لحد {{ d.pairing_expires|dt }}.</p>
 </div>
 {% endfor %}
+<div class="card"><b>إضافة جهاز:</b>
+<ol style="margin:6px 0 0">
+  <li>اكتب اسم للجهاز تحت ودوس «إضافة». هيظهر كود من 6 أرقام.</li>
+  <li>ثبّت تطبيق تموين على الجهاز وافتحه.</li>
+  <li>اكتب عنوان الكمبيوتر ده (مثال <code dir="ltr">192.168.1.20</code>) والكود، ودوس «ربط الجهاز».</li>
+</ol></div>
 <form method="post" action="/devices" class="card bar">
   <div style="flex:1;min-width:200px"><label>اسم الجهاز</label><input name="name" placeholder="مثال: كاشير 1، مخزن" required></div>
   <button class="btn" style="align-self:end">+ إضافة جهاز وإظهار كود الربط</button>
 </form>
 <div class="table-wrap"><table><tr><th>الجهاز</th><th>الحالة</th><th>آخر اتصال</th><th>نسخة التطبيق</th><th></th></tr>
 {% for d in items %}<tr><td>{{ d.name }}</td>
-<td>{% if not d.active %}<span class="pill p-gray">موقوف</span>{% elif d.token_hash %}<span class="pill p-ok">مربوط</span>{% elif d.pairing_code and d.pairing_expires > now %}<span class="pill p-warn">بانتظار الربط · {{ d.pairing_code }}</span>{% else %}<span class="pill p-red">غير مربوط</span>{% endif %}</td>
+<td>{% if not d.active %}<span class="pill p-gray">موقوف</span>{% elif d.token_hash %}<span class="pill p-ok">مربوط</span>{% elif d.pairing_code and d.pairing_expires > now %}<span class="pill p-warn">بانتظار الربط · كود {{ d.pairing_code }} لحد {{ d.pairing_expires|dt }}</span>{% else %}<span class="pill p-red">غير مربوط — الكود انتهى</span>{% endif %}</td>
 <td>{{ d.last_seen|dt }}</td><td dir="ltr" style="text-align:right">{{ d.app_version or '—' }}</td>
 <td><form class="inline" method="post" action="/devices/{{ d.id }}/repair" onsubmit="return confirm('كود ربط جديد؟ الربط القديم للجهاز ده هيقف فوراً. أي بيانات لسه ماتبعتتش من الجهاز هتفضل عليه لحد ما يتربط تاني.')"><button class="btn small light">كود ربط جديد</button></form>
 {% if d.active %}<form class="inline" method="post" action="/devices/{{ d.id }}/disable" onsubmit="return confirm('إيقاف الجهاز؟ (مثلاً لو اتسرق أو ضاع)')"><button class="btn small red">إيقاف</button></form>{% endif %}</td></tr>

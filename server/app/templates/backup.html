@@ -9,6 +9,26 @@
   {% else %}
   <div class="alert error">برنامج pg_dump مش موجود على الكمبيوتر ده، فالتنزيل من هنا مش متاح. استخدم سكربت النسخ في مجلد السيرفر (اقرأ README).</div>
   {% endif %}
-  <p class="muted">للنسخ التلقائي اليومي: شغّل <code>scripts/backup.py</code> من «Task Scheduler» في ويندوز. الخطوات في README.</p>
+  <p class="muted">النسخ التلقائي اليومي بيتعمل الساعة 11:15 بالليل (setup.bat بيجهّزه)، في: <code dir="ltr">{{ dir }}</code></p>
+</div>
+<h2>حالة النسخ</h2>
+<div class="stats">
+  <div class="stat"><small>آخر نسخة ناجحة</small><b style="font-size:18px">{{ last_ok.when if last_ok else 'لا يوجد' }}</b>{% if last_ok %}<div class="muted" style="font-size:13px">{{ last_ok.detail }}</div>{% endif %}</div>
+  <div class="stat"><small>آخر محاولة</small>{% if last %}<b style="font-size:18px" class="{{ '' if last.ok else 'neg' }}">{{ 'نجحت' if last.ok else 'فشلت' }}</b><div class="muted" style="font-size:13px">{{ last.when }}</div>{% else %}<b style="font-size:18px">—</b>{% endif %}</div>
+</div>
+{% if last and not last.ok %}<div class="alert error">آخر نسخة فشلت: {{ last.detail }}</div>{% endif %}
+{% if not last_ok %}<div class="alert error">مفيش أي نسخة احتياطية ناجحة مسجلة في <code dir="ltr">{{ dir }}</code>. شغّل setup.bat أو نزّل نسخة يدوي.</div>{% endif %}
+{% if recent %}<div class="table-wrap"><table><thead><tr><th>الوقت</th><th>النتيجة</th><th>التفاصيل</th></tr></thead>
+{% for e in recent %}<tr><td>{{ e.when }}</td><td>{% if e.ok %}<span class="pill p-ok">نجحت</span>{% else %}<span class="pill p-red">فشلت</span>{% endif %}</td><td style="font-size:13px">{{ e.detail }}</td></tr>{% endfor %}
+</table></div>{% endif %}
+<h2>الاسترجاع (لو الكمبيوتر باظ أو البيانات اتمسحت)</h2>
+<div class="card">
+<ol>
+  <li>وقّف السيرفر: من «Task Scheduler» اعمل End لمهمة <b>Tamween server</b>.</li>
+  <li>افتح «Command Prompt» كمدير، وادخل فولدر السيرفر.</li>
+  <li>اكتب (غيّر اسم الملف لآخر نسخة سليمة):<br><code dir="ltr">pg_restore --clean --no-owner -U postgres -d tamween "{{ dir }}\tamween-YYYYMMDD-HHMMSS.dump"</code></li>
+  <li>شغّل المهمة تاني، وافتح لوحة التحكم واتأكد من آخر فواتير وأرصدة.</li>
+</ol>
+<p class="muted">جرّب الاسترجاع مرة على كمبيوتر تاني قبل ما تحتاجه فعلاً.</p>
 </div>
 {% endblock %}

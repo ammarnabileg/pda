@@ -102,3 +102,78 @@ def test_reports_with_data(admin_client, device_client, seed):
     r = admin_client.get("/reports")
     assert "14.700" in r.text and "أرز" in r.text
     assert "2.400" in r.text  # profit: 14.700 - 6 * 2.050
+
+
+def product_form(**over):
+    data = {"barcode": "777001", "name": "شاي", "unit": "piece", "price": "0.950", "cost": "0.700",
+            "carton": "12", "min_stock": "0", "stock": "24", "active": "1", "xb_code": [], "xb_mode": []}
+    data.update(over)
+    return data
+
+
+def test_product_extra_barcodes_and_sync(admin_client, device_client, seed, db):
+    r = admin_client.post("/products/new", data=product_form(xb_code=["777009", "777002"], xb_mode=["carton", "piece"]), follow_redirects=False)
+    assert r.status_code == 303
+    from app.models import ProductBarcode
+    p = db.query(Product).filter_by(barcode="777001").one()
+    assert {(b.code, b.mode) for b in p.extra_barcodes} == {("777009", "carton"), ("777002", "piece")}
+    # Devices receive the extra barcodes with their unit.
+    pulled = next(x for x in device_client.get("/api/v1/sync/pull?since=0").json()["products"] if x["barcode"] == "777001")
+    assert {(b["code"], b["mode"]) for b in pulled["barcodes"]} == {("777009", "carton"), ("777002", "piece")}
+    # Edit: drop one, keep one (same code kept in place, no unique clash), change its unit.
+    v = db.get(Product, p.id).version
+    r = admin_client.post(f"/products/{p.id}", data=product_form(xb_code=["777009"], xb_mode=["piece"]), follow_redirects=False)
+    assert r.status_code == 303
+    db.expire_all()
+    p = db.get(Product, p.id)
+    assert [(b.code, b.mode) for b in p.extra_barcodes] == [("777009", "piece")]
+    assert p.version > v
+    assert db.query(ProductBarcode).count() == 1
+    # Search finds a product by an extra barcode.
+    assert "شاي" in admin_client.get("/products?q=777009").text
+
+
+def test_barcode_rules(admin_client, seed):
+    # Already the main barcode of another product.
+    r = admin_client.post("/products/new", data=product_form(xb_code=["6281000123456"], xb_mode=["carton"]))
+    assert r.status_code == 400 and "أرز" in r.text
+    # Carton barcode without a carton size.
+    r = admin_client.post("/products/new", data=product_form(carton="0", xb_code=["777010"], xb_mode=["carton"]))
+    assert r.status_code == 400 and "عدد الحبات في الكرتون" in r.text
+    # Repeated inside the same product.
+    r = admin_client.post("/products/new", data=product_form(xb_code=["777001"], xb_mode=["piece"]))
+    assert r.status_code == 400 and "متكرر" in r.text
+    # Errors are shown next to their field.
+    r = admin_client.post("/products/new", data=product_form(price="abc"))
+    assert 'id="err-price"' in r.text
+
+
+def test_receipt_accepts_carton_barcode(admin_client, seed, db):
+    from app.models import ProductBarcode
+    db.add(ProductBarcode(product_id=seed["rice"].id, code="16281000123453", mode="carton"))
+    db.commit()
+    r = admin_client.post("/receipts/new", data={"supplier_id": str(seed["supplier"].id), "note": "",
+                                                 "product": ["16281000123453 — أرز"], "mode": ["carton"], "qty": ["3"]}, follow_redirects=False)
+    assert r.status_code == 303
+
+
+def test_import_with_carton_barcode(admin_client, seed, db):
+    csv_text = "barcode,name,unit,price,cost,carton,stock,carton_barcode,extra_barcodes\n888001,عدس,piece,0.5,0.4,10,20,1888001,888002 888003\n"
+    r = admin_client.post("/products-import", files={"file": ("p.csv", csv_text.encode(), "text/csv")}, follow_redirects=False)
+    assert r.status_code == 303
+    p = db.query(Product).filter_by(barcode="888001").one()
+    assert sorted((b.code, b.mode) for b in p.extra_barcodes) == [("1888001", "carton"), ("888002", "piece"), ("888003", "piece")]
+
+
+def test_new_pages_render(admin_client, seed, device_client):
+    import uuid
+    device_client.post("/api/v1/sync/push", json={"counts": [{"id": str(uuid.uuid4()), "finished_at": "2026-11-01T09:00:00Z",
+        "lines": [{"product_id": seed["rice"].id, "counted": 45}, {"product_id": seed["sugar"].id, "counted": "125"}]}]})
+    for url in ["/", "/products?status=all&unit=kg&low=1&page=3", "/counts", "/backup", "/reports", "/sales", "/devices", "/employees",
+                f"/receipts/{seed['receipt'].id}?only=diff"]:
+        r = admin_client.get(url)
+        assert r.status_code == 200, url
+    from app.models import CountSession
+    cid = admin_client.get("/counts").text.split('/counts/')[1].split('"')[0]
+    r = admin_client.get(f"/counts/{cid}?only=diff")
+    assert "ناقص 3 حبة" in r.text and "سكر" not in r.text.split("الفروق بس")[1]

@@ -79,6 +79,14 @@ class Product {
   );
 }
 
+/// A product found by a barcode, with the unit that barcode stands for
+/// (a carton barcode gives "carton"). [mode] is null when picked by name.
+class ScanHit {
+  final Product product;
+  final String? mode;
+  const ScanHit(this.product, [this.mode]);
+}
+
 class Employee {
   final int id;
   final String name;

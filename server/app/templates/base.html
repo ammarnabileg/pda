@@ -7,20 +7,54 @@
 <link rel="stylesheet" href="/static/style.css">
 </head>
 <body>
+{% macro icon(name) %}<svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-{{ name }}"/></svg>{% endmacro %}
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <defs>
+    <symbol id="i-home" viewBox="0 0 24 24"><path d="M3 11 12 3l9 8v10h-6v-6H9v6H3z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/></symbol>
+    <symbol id="i-cart" viewBox="0 0 24 24"><path d="M3 4h2l2.4 11h11L21 7H6.2M9 20h.01M18 20h.01" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+    <symbol id="i-truck" viewBox="0 0 24 24"><path d="M2 5h12v11H2zM14 9h4l4 4v3h-8M6 19h.01M18 19h.01" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/></symbol>
+    <symbol id="i-check" viewBox="0 0 24 24"><path d="M9 4h6v3H9zM6 6h12v15H6zM9 13l2 2 4-4" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/></symbol>
+    <symbol id="i-box" viewBox="0 0 24 24"><path d="M3 7l9-4 9 4v10l-9 4-9-4zM3 7l9 4 9-4M12 11v10" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/></symbol>
+    <symbol id="i-users" viewBox="0 0 24 24"><path d="M9 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8zM2 21v-1a6 6 0 0 1 12 0v1M16 3.5a4 4 0 0 1 0 7M22 21v-1a6 6 0 0 0-4-5.6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></symbol>
+    <symbol id="i-supplier" viewBox="0 0 24 24"><path d="M4 21V9l8-6 8 6v12M9 21v-7h6v7" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/></symbol>
+    <symbol id="i-chart" viewBox="0 0 24 24"><path d="M4 20V10M10 20V4M16 20v-7M22 20H2" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></symbol>
+    <symbol id="i-device" viewBox="0 0 24 24"><path d="M7 2h10v20H7zM11 18h2" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/></symbol>
+    <symbol id="i-save" viewBox="0 0 24 24"><path d="M5 3h11l3 3v15H5zM8 3v6h7V3M8 21v-7h8v7" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/></symbol>
+    <symbol id="i-warn" viewBox="0 0 24 24"><path d="M12 3 2 21h20zM12 10v5M12 18h.01" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/></symbol>
+    <symbol id="i-ok" viewBox="0 0 24 24"><path d="M20 6 9 17l-5-5" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+    <symbol id="i-menu" viewBox="0 0 24 24"><path d="M3 6h18M3 12h18M3 18h18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></symbol>
+  </defs>
+</svg>
 {% if user %}
 <div class="layout">
-  <nav class="side">
-    <div class="brand">◆ تموين</div>
-    {% set links = [("/", "الرئيسية"), ("/products", "الأصناف"), ("/receipts", "استلام الموردين"), ("/suppliers", "الموردين"), ("/sales", "المبيعات"), ("/reports", "التقارير"), ("/counts", "الجرد")] %}
-    {% if user.role == "admin" %}{% set links = links + [("/employees", "الموظفين"), ("/devices", "الأجهزة"), ("/backup", "النسخ الاحتياطي")] %}{% endif %}
-    {% for href, label in links %}
-      <a href="{{ href }}" class="{{ 'on' if (href == '/' and path == '/') or (href != '/' and path.startswith(href)) }}">{{ label }}</a>
+  <nav class="side" aria-label="القائمة">
+    <div class="side-top">
+      <div class="brand">◆ تموين</div>
+      <button class="menu-btn" type="button" aria-expanded="false" aria-controls="side-links" onclick="const o=document.body.classList.toggle('menu-open');this.setAttribute('aria-expanded',o)">{{ icon('menu') }} القائمة</button>
+    </div>
+    <div id="side-links">
+    {% set groups = [
+      ("التشغيل", [("/", "الرئيسية", "home"), ("/sales", "المبيعات", "cart"), ("/receipts", "الاستلام", "truck"), ("/counts", "الجرد", "check")]),
+      ("البيانات", [("/products", "الأصناف", "box"), ("/suppliers", "الموردين", "supplier")]),
+      ("التقارير", [("/reports", "تقارير المبيعات", "chart")]),
+    ] %}
+    {% if user.role == "admin" %}{% set groups = groups + [("الإدارة", [("/employees", "الموظفين", "users"), ("/devices", "الأجهزة", "device"), ("/backup", "النسخ الاحتياطي", "save")])] %}{% endif %}
+    {% for gname, links in groups %}
+      <div class="group">{{ gname }}</div>
+      {% for href, label, ic in links %}
+        {% set on = (href == '/' and path == '/') or (href != '/' and path.startswith(href)) %}
+        <a href="{{ href }}" class="{{ 'on' if on }}" {{ 'aria-current="page"' if on }}>{{ icon(ic) }}<span>{{ label }}</span></a>
+      {% endfor %}
     {% endfor %}
-    <div class="who">{{ user.name }} · {{ ROLES[user.role] }}<br>
-      <form method="post" action="/logout"><button>تسجيل الخروج</button></form></div>
+    <div class="who">
+      <div class="who-name">{{ user.name }}</div>
+      <div class="who-role">{{ ROLES[user.role] }}</div>
+      <form method="post" action="/logout"><button>تسجيل الخروج</button></form>
+    </div>
+    </div>
   </nav>
   <main class="main">
-    {% if flash %}<div class="alert {{ flash.kind }}">{{ flash.msg }}</div>{% endif %}
+    {% if flash %}<div class="alert {{ flash.kind }}" role="status">{{ icon('ok' if flash.kind == 'ok' else 'warn') }} {{ flash.msg }}</div>{% endif %}
     {% block content %}{% endblock %}
   </main>
 </div>

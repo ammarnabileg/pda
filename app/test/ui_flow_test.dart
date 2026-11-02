@@ -36,6 +36,10 @@ Future<LocalDb> seededDb() async {
       {
         'id': 1,
         'barcode': '6281000123456',
+        'barcodes': [
+          {'code': '16281000123453', 'mode': 'carton'},
+          {'code': '6281000123999', 'mode': 'piece'},
+        ],
         'name': 'أرز بسمتي ٥ كجم',
         'unit': 'piece',
         'price': '2.450',
@@ -367,6 +371,36 @@ void main() {
     await tester.tap(find.byType(SyncIndicator).first);
     await settle(tester);
     expect(find.text('مزامنة الآن'), findsOneWidget);
+    await tester.pump(const Duration(seconds: 30));
+  });
+
+  testWidgets('a carton barcode sells a carton; a second piece barcode sells a piece', (tester) async {
+    await startApp(tester);
+    await login(tester, 'أحمد', '2222');
+    await tester.tap(find.text('بيع'));
+    await settle(tester);
+    await scan(tester, '16281000123453');
+    await settle(tester);
+    expect(find.widgetWithText(QtyStepper, '1 كرتون'), findsOneWidget);
+    expect(find.text('14.700'), findsWidgets); // 6 x 2.450
+    await scan(tester, '6281000123999');
+    await settle(tester);
+    expect(find.widgetWithText(QtyStepper, '1 حبة'), findsOneWidget);
+    expect(find.text('17.150'), findsOneWidget); // 14.700 + 2.450
+    await tester.pump(const Duration(seconds: 30));
+  });
+
+  testWidgets('counting with a carton barcode starts the pad on cartons', (tester) async {
+    await startApp(tester);
+    await login(tester, 'محمود', '3333');
+    await tester.tap(find.text('جرد'));
+    await settle(tester);
+    await scan(tester, '16281000123453');
+    await settle(tester);
+    await tester.tap(find.text('2').last);
+    await tester.tap(find.text('حفظ'));
+    await settle(tester);
+    expect(find.textContaining('12 حبة (2 كرتون)', findRichText: true), findsOneWidget);
     await tester.pump(const Duration(seconds: 30));
   });
 }

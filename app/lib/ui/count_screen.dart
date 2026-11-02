@@ -72,8 +72,9 @@ class _CountScreenState extends State<CountScreen> {
     );
   }
 
-  Future<void> _onProduct(Product? p) async {
-    if (p == null || !mounted) return;
+  Future<void> _onProduct(ScanHit? h) async {
+    if (h == null || !mounted) return;
+    final p = h.product;
     products[p.id] = p;
     final i = lines.indexWhere((l) => l.productId == p.id);
     final prev = i >= 0 ? lines[i].base : 0;
@@ -82,6 +83,7 @@ class _CountScreenState extends State<CountScreen> {
       title: p.name,
       hint: prev > 0 ? 'معدود قبل كده: ${p.baseText(prev)} — العدد الجديد هيتجمع عليه' : 'اكتب العدد الموجود على الرف',
       modes: p.modes,
+      mode: h.mode == 'carton' && p.carton > 0 ? 'carton' : null, // carton barcode: counting cartons
       carton: p.carton,
       preview: prev > 0
           ? (q, m) => 'المجموع هيبقى: ${p.baseText(prev + p.toBase(q, m))}'

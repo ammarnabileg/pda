@@ -30,3 +30,7 @@ if not SECRET_KEY:
 PORT = int(os.environ.get("PORT", "9001"))
 HOST = os.environ.get("HOST", "0.0.0.0")
 PAIRING_MINUTES = 30
+# Where setup.ps1 puts the daily backups (and backup.log).
+BACKUP_DIR = os.environ.get("BACKUP_DIR") or (
+    os.path.join(os.environ.get("ProgramData", "C:\\ProgramData"), "Tamween", "Backups") if os.name == "nt"
+    else str(BASE_DIR / "backups"))

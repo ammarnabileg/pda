@@ -17,11 +17,22 @@ void main() {
           await db.execute('''CREATE TABLE products(id INTEGER PRIMARY KEY, barcode TEXT NOT NULL, name TEXT NOT NULL,
             unit TEXT NOT NULL, price INTEGER NOT NULL, carton INTEGER NOT NULL, stock INTEGER NOT NULL, active INTEGER NOT NULL)''');
           await db.execute('CREATE TABLE kv(key TEXT PRIMARY KEY, value TEXT NOT NULL)');
-          await db.execute('CREATE TABLE outbox(id TEXT PRIMARY KEY, kind TEXT NOT NULL, payload TEXT NOT NULL, created_at TEXT NOT NULL, state TEXT NOT NULL DEFAULT \'pending\', error TEXT)');
+          await db.execute(
+            'CREATE TABLE outbox(id TEXT PRIMARY KEY, kind TEXT NOT NULL, payload TEXT NOT NULL, created_at TEXT NOT NULL, state TEXT NOT NULL DEFAULT \'pending\', error TEXT)',
+          );
         },
       ),
     );
-    await old.insert('products', {'id': 1, 'barcode': '1', 'name': 'x', 'unit': 'piece', 'price': 100, 'carton': 0, 'stock': 0, 'active': 1});
+    await old.insert('products', {
+      'id': 1,
+      'barcode': '1',
+      'name': 'x',
+      'unit': 'piece',
+      'price': 100,
+      'carton': 0,
+      'stock': 0,
+      'active': 1,
+    });
     await old.insert('kv', {'key': 'version', 'value': '57'});
     await old.insert('outbox', {'id': 'sales:a', 'kind': 'sales', 'payload': '{}', 'created_at': 'now'});
     await old.close();
@@ -31,5 +42,6 @@ void main() {
     expect(p!.cost, 0);
     expect(await db.get('version'), '0', reason: 'next sync downloads everything, including purchase prices');
     expect(await db.countOutbox('pending'), 1, reason: 'sales not yet sent survive the upgrade');
+    expect(await db.lookup('nothing'), isNull, reason: 'barcodes table exists after the upgrade');
   });
 }

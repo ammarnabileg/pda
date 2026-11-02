@@ -7,7 +7,7 @@ from sqlalchemy.orm import Session
 
 from .db import next_version
 from .models import (
-    CountLine, CountSession, Device, Employee, Product, Receipt, ReceiptLine, Sale, SaleLine,
+    CountLine, CountSession, Device, Employee, Product, ProductBarcode, Receipt, ReceiptLine, Sale, SaleLine,
     StockMove, now,
 )
 
@@ -43,8 +43,30 @@ class SyncError(Exception):
 
 # ---------- Pull (server -> device) ----------
 
+def find_by_code(db: Session, code: str):
+    """(product, mode) for any barcode: the main one (piece / kg) or an extra one."""
+    code = (code or "").strip()
+    if not code:
+        return None, None
+    p = db.scalar(select(Product).where(Product.barcode == code))
+    if p:
+        return p, ("kg" if p.unit == "kg" else "piece")
+    b = db.scalar(select(ProductBarcode).where(ProductBarcode.code == code))
+    return (b.product, b.mode) if b else (None, None)
+
+
+def code_taken(db: Session, code: str, product_id: int | None) -> str | None:
+    """Name of another product already using this barcode, or None."""
+    p = db.scalar(select(Product).where(Product.barcode == code, Product.id != (product_id or 0)))
+    if p:
+        return p.name
+    b = db.scalar(select(ProductBarcode).where(ProductBarcode.code == code, ProductBarcode.product_id != (product_id or 0)))
+    return b.product.name if b else None
+
+
 def product_dict(p: Product):
     return {"id": p.id, "barcode": p.barcode, "name": p.name, "unit": p.unit,
+            "barcodes": [{"code": b.code, "mode": b.mode} for b in p.extra_barcodes],
             "price": str(p.price), "cost": str(p.cost), "carton": p.carton, "stock": str(p.stock), "active": p.active}
 
 

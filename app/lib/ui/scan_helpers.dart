@@ -5,12 +5,13 @@ import '../data/models.dart';
 import '../util/feedback.dart';
 import 'widgets.dart';
 
-/// Looks a scanned code up; on failure beeps and shows a red message.
-Future<Product?> findScanned(BuildContext context, AppState app, String code) async {
-  final p = await app.db.productByBarcode(code);
-  if (p != null) {
+/// Looks a scanned code up (main or extra barcode, with its unit);
+/// on failure beeps and shows a red message.
+Future<ScanHit?> findScanned(BuildContext context, AppState app, String code) async {
+  final hit = await app.db.lookup(code);
+  if (hit != null) {
     beepOk();
-    return p;
+    return hit;
   }
   beepError();
   if (context.mounted) {
@@ -36,10 +37,13 @@ Future<Product?> findScanned(BuildContext context, AppState app, String code) as
   return null;
 }
 
-Future<Product?> typeAndFind(BuildContext context, AppState app) async {
+Future<ScanHit?> typeAndFind(BuildContext context, AppState app) async {
   final code = await typeBarcode(context);
   if (code == null || !context.mounted) return null;
   return findScanned(context, app, code);
 }
 
-Future<Product?> searchAndPick(BuildContext context, AppState app) => searchProductSheet(context, (q) => app.db.searchProducts(q));
+Future<ScanHit?> searchAndPick(BuildContext context, AppState app) async {
+  final p = await searchProductSheet(context, (q) => app.db.searchProducts(q));
+  return p == null ? null : ScanHit(p);
+}

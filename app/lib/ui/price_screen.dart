@@ -18,18 +18,24 @@ String syncedAgo(DateTime? t) {
 }
 
 class PriceScreen extends StatefulWidget {
-  final Product? initial;
+  final ScanHit? initial;
   const PriceScreen({super.key, this.initial});
   @override
   State<PriceScreen> createState() => _PriceScreenState();
 }
 
 class _PriceScreenState extends State<PriceScreen> {
-  late Product? p = widget.initial;
+  late Product? p = widget.initial?.product;
+  late String? scannedMode = widget.initial?.mode;
 
-  Future<void> _show(Future<Product?> f) async {
+  Future<void> _show(Future<ScanHit?> f) async {
     final r = await f;
-    if (r != null && mounted) setState(() => p = r);
+    if (r != null && mounted) {
+      setState(() {
+        p = r.product;
+        scannedMode = r.mode;
+      });
+    }
   }
 
   @override
@@ -54,6 +60,17 @@ class _PriceScreenState extends State<PriceScreen> {
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
                   Text(p!.name, textAlign: TextAlign.center, style: T.heading.copyWith(fontSize: 20)),
+                  if (scannedMode == 'carton') ...[
+                    const SizedBox(height: S.xs),
+                    Center(
+                      child: Pill(
+                        'اتمسح باركود الكرتون (${p!.carton} حبة) — سعر الكرتون ${money(p!.price * p!.carton)}',
+                        fg: cBlue,
+                        bg: cBlue2,
+                        icon: Icons.inventory_2_outlined,
+                      ),
+                    ),
+                  ],
                   const SizedBox(height: S.s),
                   // Shrinks instead of overflowing with large Android fonts.
                   FittedBox(

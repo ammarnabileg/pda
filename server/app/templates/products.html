@@ -1,24 +1,44 @@
 {% extends "base.html" %}{% block title %}الأصناف{% endblock %}
 {% block content %}
+{% from "_macros.html" import icon %}
 <div class="bar"><h1>الأصناف</h1>
-  <a class="btn light" href="/products-import">استيراد من Excel/CSV</a>
+  <a class="btn light" href="/products-import">استيراد من ملف CSV</a>
   <a class="btn" href="/products/new">+ صنف جديد</a></div>
-<form class="bar" method="get">
-  <input name="q" value="{{ q }}" placeholder="ابحث بالاسم أو الباركود" style="max-width:340px" autofocus>
-  <label class="check"><input type="checkbox" name="low" value="1" {{ 'checked' if low }}> تحت حد الطلب فقط</label>
-  <label class="check"><input type="checkbox" name="inactive" value="1" {{ 'checked' if inactive }}> عرض الموقوفة</label>
-  <button class="btn light">بحث</button>
+<form class="bar card" method="get">
+  <div style="flex:2;min-width:220px"><label for="q">بحث</label><input id="q" name="q" value="{{ q }}" placeholder="الاسم أو أي باركود (حبة أو كرتون)" autofocus></div>
+  <div><label for="status">الحالة</label><select id="status" name="status">
+    {% for k, l in [("active", "فعّال"), ("inactive", "موقوف"), ("all", "الكل")] %}<option value="{{ k }}" {{ 'selected' if status == k }}>{{ l }}</option>{% endfor %}</select></div>
+  <div><label for="unit">الوحدة</label><select id="unit" name="unit"><option value="">الكل</option>
+    {% for k, l in UNITS.items() %}<option value="{{ k }}" {{ 'selected' if unit == k }}>{{ 'بالكيلو' if k == 'kg' else 'بالحبة' }}</option>{% endfor %}</select></div>
+  <label class="check" style="align-self:end;padding-bottom:10px"><input type="checkbox" name="low" value="1" {{ 'checked' if low }}> تحت حد الطلب</label>
+  <button class="btn" style="align-self:end">عرض</button>
+  {% if filtered %}<a class="btn light" style="align-self:end" href="/products">مسح الفلاتر</a>{% endif %}
 </form>
+<p class="muted">{{ total }} صنف{% if pages > 1 %} · صفحة {{ page }} من {{ pages }}{% endif %}</p>
+{% if items %}
 <div class="table-wrap"><table>
-<tr><th>الصنف</th><th>الباركود</th><th>الوحدة</th><th class="num">سعر البيع</th><th class="num">سعر الشراء</th><th class="num">الرصيد</th><th></th></tr>
+<thead><tr><th>الصنف</th><th>الباركود</th><th>الوحدة</th><th class="num">سعر البيع</th><th class="num">سعر الشراء</th><th class="num">الرصيد</th><th></th></tr></thead>
 {% for p in items %}
+{% set is_low = p.min_stock > 0 and p.stock <= p.min_stock %}
 <tr><td><a href="/products/{{ p.id }}">{{ p.name }}</a> {% if not p.active %}<span class="pill p-gray">موقوف</span>{% endif %}</td>
-<td dir="ltr" style="text-align:right">{{ p.barcode }}</td>
-<td>{{ UNITS[p.unit] }}{% if p.carton %} · كرتون {{ p.carton }}{% endif %}</td>
-<td class="num">{{ p.price|money }}</td><td class="num">{{ p.cost|money }}</td>
-<td class="num {{ 'neg' if p.min_stock > 0 and p.stock <= p.min_stock }}">{{ p.stock|qty(p.unit) }}</td>
-<td><a href="/products/{{ p.id }}">تعديل</a></td></tr>
-{% else %}<tr><td colspan="7" class="muted">لا توجد أصناف{% if q %} بهذا البحث{% endif %}.</td></tr>{% endfor %}
+<td dir="ltr" style="text-align:right">{{ p.barcode }}{% if p.extra_barcodes %} <span class="pill p-info" title="{% for b in p.extra_barcodes %}{{ b.code }} ({{ MODES[b.mode] }}) {% endfor %}">+{{ p.extra_barcodes|length }}</span>{% endif %}</td>
+<td>{% if p.unit == 'kg' %}بالكيلو{% else %}حبة{% if p.carton %} · كرتون {{ p.carton }}{% endif %}{% endif %}</td>
+<td class="num">{{ p.price|money }}{% if p.carton %}<div class="muted" style="font-size:13px">كرتون {{ (p.price * p.carton)|money }}</div>{% endif %}</td>
+<td class="num">{{ p.cost|money }}</td>
+<td class="num">{% if is_low %}<span class="neg">{{ icon('warn') }} {{ p.stock|qty(p.unit) }}</span><div style="font-size:12px" class="neg">تحت حد الطلب</div>{% else %}{{ p.stock|qty(p.unit) }}{% endif %}</td>
+<td><a class="btn small light" href="/products/{{ p.id }}">تعديل</a></td></tr>
+{% endfor %}
 </table></div>
-{% if items|length == 500 %}<p class="muted">يتم عرض أول 500 صنف. استخدم البحث.</p>{% endif %}
+{% if pages > 1 %}
+<nav class="pager" aria-label="الصفحات">
+  {% if page > 1 %}<a href="{{ page_url(page - 1) }}">السابق</a>{% endif %}
+  {% for n in range(1, pages + 1) %}{% if n == page %}<span class="cur">{{ n }}</span>{% elif n <= 2 or n > pages - 2 or (n - page)|abs <= 2 %}<a href="{{ page_url(n) }}">{{ n }}</a>{% elif n == 3 or n == pages - 2 %}<span>…</span>{% endif %}{% endfor %}
+  {% if page < pages %}<a href="{{ page_url(page + 1) }}">التالي</a>{% endif %}
+</nav>
+{% endif %}
+{% elif filtered %}
+<div class="card empty">مفيش أصناف بالبحث ده.<br><a class="btn light" href="/products">مسح الفلاتر</a></div>
+{% else %}
+<div class="card empty">لسه مفيش أصناف.<br><a class="btn" href="/products/new">+ أضف صنف</a><a class="btn light" href="/products-import">استورد ملف</a></div>
+{% endif %}
 {% endblock %}

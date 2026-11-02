@@ -18,7 +18,7 @@ from sqlalchemy import func, select  # noqa: E402
 
 from app import services  # noqa: E402
 from app.db import SessionLocal, init_db  # noqa: E402
-from app.models import Device, Employee, Product, Receipt, ReceiptLine, Supplier, now  # noqa: E402
+from app.models import Device, Employee, Product, ProductBarcode, Receipt, ReceiptLine, Supplier, now  # noqa: E402
 from app.security import hash_password, hash_pin, new_pairing_code  # noqa: E402
 
 PRODUCTS = [
@@ -58,6 +58,8 @@ def main():
         db.flush()
         services.move_stock(db, p, stock, "manual", note="رصيد افتتاحي")
         prods[barcode] = p
+    # The rice carton has its own barcode.
+    prods["6281000123456"].extra_barcodes.append(ProductBarcode(code="16281000123453", mode="carton"))
     s1, s2 = Supplier(name="شركة المواد الغذائية المتحدة"), Supplier(name="شركة الألبان الوطنية")
     db.add_all([s1, s2])
     db.flush()
