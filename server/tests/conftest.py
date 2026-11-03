@@ -27,6 +27,8 @@ def clean():
     yield
     with engine.begin() as c:
         names = ", ".join(t.name for t in Base.metadata.sorted_tables)
+        # Tests only: the keep-forever triggers would (rightly) refuse this.
+        c.execute(text("SET LOCAL session_replication_role = replica"))
         c.execute(text(f"TRUNCATE {names} RESTART IDENTITY CASCADE"))
     seed_roles()
 
