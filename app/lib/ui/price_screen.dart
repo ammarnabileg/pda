@@ -41,6 +41,7 @@ class _PriceScreenState extends State<PriceScreen> {
   @override
   Widget build(BuildContext context) {
     final app = AppScope.of(context);
+    final seeCost = app.employee?.can('see_cost') ?? false;
     Future<void> type() => _show(typeAndFind(context, app));
     Future<void> search() => _show(searchAndPick(context, app));
     final unit = p?.isKg == true ? 'كجم' : 'حبة';
@@ -87,8 +88,8 @@ class _PriceScreenState extends State<PriceScreen> {
                   ),
                   const SizedBox(height: S.m),
                   if (p!.carton > 0) _kv('الكرتون (${p!.carton} حبة)', '${money(p!.price * p!.carton)} ${W.currency}'),
-                  _kv('سعر الشراء', '${money(p!.cost)} ${W.currency} / $unit'),
-                  if (p!.carton > 0) _kv('شراء الكرتون', '${money(p!.cost * p!.carton)} ${W.currency}'),
+                  if (seeCost) _kv('سعر الشراء', '${money(p!.cost)} ${W.currency} / $unit'),
+                  if (seeCost && p!.carton > 0) _kv('شراء الكرتون', '${money(p!.cost * p!.carton)} ${W.currency}'),
                   _kv('الرصيد على الجهاز', p!.baseText(p!.stock)),
                   _kv('الباركود', p!.barcode),
                   const SizedBox(height: S.xs),

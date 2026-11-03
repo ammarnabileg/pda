@@ -36,8 +36,10 @@ class _ReceiveListScreenState extends State<ReceiveListScreen> {
   }
 
   Future<void> _load() async {
-    final db = AppScope.read(context).db;
-    final list = await db.openReceipts();
+    final app = AppScope.read(context);
+    final db = app.db;
+    // Without «receive» the employee only records deliveries that came with no voucher.
+    final list = (app.employee?.can('receive') ?? false) ? await db.openReceipts() : <ReceiptDoc>[];
     final prog = <int, int>{};
     for (final r in list) {
       final d = await db.getJson('draft_receipt_${r.id}');
@@ -77,6 +79,7 @@ class _ReceiveListScreenState extends State<ReceiveListScreen> {
   Widget build(BuildContext context) {
     final app = AppScope.read(context);
     var list = (items ?? []).where((r) => query.isEmpty || '${r.id}'.contains(query) || r.supplier.contains(query)).toList();
+    final canNew = app.employee?.can('new_receipt') ?? false;
     list.sort((a, b) => newestFirst ? b.createdAt.compareTo(a.createdAt) : a.createdAt.compareTo(b.createdAt));
     return WorkScaffold(
       title: 'استلام',
@@ -91,15 +94,17 @@ class _ReceiveListScreenState extends State<ReceiveListScreen> {
                 sub: 'المشرف بيضيف السندات من لوحة التحكم. بعدها اعمل ${W.sync}.',
                 action: Column(
                   children: [
-                    BigButton(
-                      'استلام من غير سند',
-                      icon: Icons.add,
-                      onPressed: () async {
-                        await Navigator.of(context).push(MaterialPageRoute(builder: (_) => const NewReceiptScreen()));
-                        _load();
-                      },
-                    ),
-                    const SizedBox(height: S.s),
+                    if (canNew) ...[
+                      BigButton(
+                        'استلام من غير سند',
+                        icon: Icons.add,
+                        onPressed: () async {
+                          await Navigator.of(context).push(MaterialPageRoute(builder: (_) => const NewReceiptScreen()));
+                          _load();
+                        },
+                      ),
+                      const SizedBox(height: S.s),
+                    ],
                     BigButton.light(W.syncNow, icon: Icons.sync, onPressed: () => app.sync(full: true)),
                   ],
                 ),
@@ -108,15 +113,17 @@ class _ReceiveListScreenState extends State<ReceiveListScreen> {
           : ListView(
               padding: const EdgeInsets.all(S.edge),
               children: [
-                BigButton.light(
-                  'استلام من غير سند',
-                  icon: Icons.add,
-                  onPressed: () async {
-                    await Navigator.of(context).push(MaterialPageRoute(builder: (_) => const NewReceiptScreen()));
-                    _load();
-                  },
-                ),
-                const SizedBox(height: S.s),
+                if (canNew) ...[
+                  BigButton.light(
+                    'استلام من غير سند',
+                    icon: Icons.add,
+                    onPressed: () async {
+                      await Navigator.of(context).push(MaterialPageRoute(builder: (_) => const NewReceiptScreen()));
+                      _load();
+                    },
+                  ),
+                  const SizedBox(height: S.s),
+                ],
                 Text('${items!.length} سند مستني · امسح صنف لفتح السند بتاعه', style: T.sub),
                 Wrap(
                   alignment: WrapAlignment.spaceBetween,

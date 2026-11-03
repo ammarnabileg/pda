@@ -204,6 +204,7 @@ class _SaleScreenState extends State<SaleScreen> {
   /// Tapping a row: full details, purchase price, change quantity or unit, delete.
   Future<void> _details(SaleLine l) async {
     final p = products[l.productId]!;
+    final seeCost = AppScope.read(context).employee?.can('see_cost') ?? false;
     final action = await showAppSheet<String>(
       context,
       Builder(
@@ -213,7 +214,9 @@ class _SaleScreenState extends State<SaleScreen> {
           children: [
             Text(p.name, style: T.heading),
             const SizedBox(height: S.s),
-            _kv('بيع / شراء', '${money(p.unitPrice(l.mode))} / ${money(p.unitCost(l.mode))} ${W.currency} لل${unitNames[l.mode]}'),
+            seeCost
+                ? _kv('بيع / شراء', '${money(p.unitPrice(l.mode))} / ${money(p.unitCost(l.mode))} ${W.currency} لل${unitNames[l.mode]}')
+                : _kv('السعر', '${money(p.unitPrice(l.mode))} ${W.currency} لل${unitNames[l.mode]}'),
             _kv('الكمية', qtyText(l.qty, l.mode) + (l.mode == 'carton' ? ' = ${qty(l.qty * p.carton, 'piece')} حبة' : '')),
             _kv('إجمالي السطر', '${money(_lineTotal(l))} ${W.currency}'),
             const SizedBox(height: S.m),

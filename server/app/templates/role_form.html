@@ -1,0 +1,24 @@
+{% extends "base.html" %}{% block title %}{{ r.name if r else 'دور جديد' }}{% endblock %}
+{% block content %}
+<div class="bar"><h1>{{ r.name if r else 'دور جديد' }}</h1><a class="btn light" href="/roles">رجوع</a></div>
+{% include "_errors.html" %}
+<form method="post" action="/roles/{{ r.key if r else 'new' }}" class="card">
+  <div class="field" style="max-width:360px"><label for="name">اسم الدور</label><input id="name" name="name" value="{{ name }}" required maxlength="80" placeholder="مثال: كاشير مسائي"></div>
+  {% for g, perms in PERM_GROUPS.items() %}
+  <h2>{{ g }}</h2>
+  <div class="perm-grid">
+    {% for k, l in perms %}<label class="check"><input type="checkbox" name="perm" value="{{ k }}" {{ 'checked' if k in perms_sel }}> {{ l }}</label>{% endfor %}
+  </div>
+  {% endfor %}
+  <p class="hint">«سعر الشراء» بيظهر على الجهاز في شاشة السعر وتفاصيل الصنف في البيع. «فك ربط الجهاز» بيخلي الموظف يقدر يفصل الجهاز عن السيرفر ويشوف العمليات اللي السيرفر رفضها.<br>
+  الموظف محتاج «دخول لوحة التحكم» واسم مستخدم وكلمة سر علشان يدخل اللوحة، وبعدين بيشوف بس الصفحات اللي ليه صلاحيتها.</p>
+  {% if r %}<p class="hint">على الدور ده {{ count }} موظف. الحفظ بيغيّر صلاحياتهم كلهم.</p>{% endif %}
+  <button class="btn">حفظ</button>
+</form>
+{% if r %}
+<form method="post" action="/roles/{{ r.key }}/delete" onsubmit="return confirm('تمسح دور «{{ r.name }}»؟')" style="margin-top:14px">
+  <button class="btn light danger" {{ 'disabled title="انقل الموظفين لدور تاني الأول"' if count }}>مسح الدور</button>
+  {% if count %}<span class="hint">مينفعش يتمسح وعليه موظفين.</span>{% endif %}
+</form>
+{% endif %}
+{% endblock %}

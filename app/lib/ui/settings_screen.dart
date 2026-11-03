@@ -136,10 +136,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 },
               ),
           ],
-          if (app.employee?.isSupervisor == true) ...[
+          if (app.employee?.can('device_admin') == true) ...[
             const SizedBox(height: S.l),
             BigButton.light(
-              'فك ربط الجهاز (للمشرف)',
+              'فك ربط الجهاز',
               icon: Icons.link_off,
               onPressed: () async {
                 final ok = await confirmSheet(

@@ -32,6 +32,10 @@ void main() {
       final ahmad = staff.firstWhere((e) => e.name == 'أحمد');
       expect(await app.login(ahmad, '9999'), isFalse);
       expect(await app.login(ahmad, '2222'), isTrue);
+      // Roles come from the server's roles table, not from code in the app.
+      expect(ahmad.permissions, isNotNull);
+      expect(ahmad.can('sale'), isTrue);
+      expect(ahmad.roleName, isNotEmpty);
 
       final rice = (await db.productByBarcode('6281000123456'))!;
       final sugar = (await db.productByBarcode('2100000012345'))!;

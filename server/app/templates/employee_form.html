@@ -7,7 +7,8 @@
 <form method="post" action="/employees/{{ e.id if e else 'new' }}" class="card">
   <div class="grid">
     <div class="field"><label>الاسم</label><input name="name" value="{{ form.get('name', '') if form else e.name }}" required></div>
-    <div class="field"><label>الوظيفة</label><select name="role" id="role">{% for k, l in ROLES.items() %}<option value="{{ k }}" {{ 'selected' if k == role }}>{{ l }}</option>{% endfor %}</select></div>
+    <div class="field"><label>الدور</label><select name="role" id="role">{% for r in roles %}<option value="{{ r.key }}" data-dash="{{ 1 if 'dashboard' in r.perms else 0 }}" {{ 'selected' if r.key == role }}>{{ r.name }}</option>{% endfor %}</select>
+      <div class="hint"><a href="/roles">تعديل صلاحيات الأدوار</a></div></div>
     <div class="field"><label>الرقم السري للجهاز (4–6 أرقام)</label><input name="pin" inputmode="numeric" pattern="[0-9]{4,6}" dir="ltr" {{ 'required' if not e }} autocomplete="off">
       {% if e %}<div class="hint">سيبه فاضي لو مش عايز تغيّره</div>{% endif %}</div>
   </div>
@@ -19,5 +20,5 @@
   <p class="hint">إيقاف الموظف بيمنعه من الدخول على الأجهزة بعد أول مزامنة.</p>
   <button class="btn">حفظ</button>
 </form>
-<script>const r=document.getElementById('role'),d=document.getElementById('dash');function s(){d.style.display=(r.value==='supervisor'||r.value==='admin')?'':'none'}r.addEventListener('change',s);s()</script>
+<script>const r=document.getElementById('role'),d=document.getElementById('dash');function s(){d.style.display=r.selectedOptions[0]&&r.selectedOptions[0].dataset.dash==='1'?'':'none'}r.addEventListener('change',s);s()</script>
 {% endblock %}

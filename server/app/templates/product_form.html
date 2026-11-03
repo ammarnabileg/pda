@@ -71,11 +71,11 @@
 
 {% if p %}
 <h2>الرصيد: {{ base_text(p, p.stock) }}</h2>
-<form method="post" action="/products/{{ p.id }}/stock" class="card bar">
+{% if user.can('stock_adjust') %}<form method="post" action="/products/{{ p.id }}/stock" class="card bar">
   <div style="flex:1;min-width:150px"><label for="nstock">الرصيد الصحيح ({{ 'كجم' if p.unit == 'kg' else 'حبة' }})</label><input id="nstock" name="stock" inputmode="decimal" dir="ltr" required></div>
   <div style="flex:2;min-width:200px"><label for="note">السبب</label><input id="note" name="note" placeholder="مثال: تالف، هدية، تصحيح" required></div>
   <button class="btn light" style="align-self:end">تعديل الرصيد يدوياً</button>
-</form>
+</form>{% endif %}
 <h2>آخر حركات المخزون</h2>
 <div class="table-wrap"><table><thead><tr><th>الوقت</th><th>النوع</th><th class="num">الكمية</th><th>مرجع / ملاحظة</th></tr></thead>
 {% set reasons = {"sale": "بيع", "receipt": "استلام", "count": "جرد", "manual": "يدوي"} %}

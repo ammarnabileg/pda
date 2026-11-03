@@ -19,8 +19,8 @@ from sqlalchemy.orm import Session
 from . import config, services
 from .db import get_db
 from .models import (
-    MODES, ROLES, UNITS, CountLine, CountSession, Device, Employee, Product, ProductBarcode, Receipt, ReceiptLine,
-    Sale, SaleLine, StockMove, Supplier, now,
+    ADMIN_ROLE, MODES, PERMISSIONS, UNITS, CountLine, CountSession, Device, Employee, Product, ProductBarcode, Receipt, ReceiptLine,
+    Role, Sale, SaleLine, StockMove, Supplier, now,
 )
 from .security import hash_password, hash_pin, new_pairing_code, verify_password, verify_pin
 
@@ -58,7 +58,7 @@ def base_text(p: Product, base):
 
 
 templates.env.filters.update(money=fmt_money, qty=fmt_qty, dt=fmt_dt)
-templates.env.globals.update(ROLES=ROLES, UNITS=UNITS, MODES=MODES, base_text=base_text)
+templates.env.globals.update(PERMISSIONS=PERMISSIONS, UNITS=UNITS, MODES=MODES, base_text=base_text)
 
 
 def render(request: Request, name: str, ctx: dict | None = None, status: int = 200):
@@ -94,10 +94,17 @@ def current_user(request: Request, db: Session = Depends(get_db)) -> Employee:
     return user
 
 
-def admin_user(user: Employee = Depends(current_user)) -> Employee:
-    if user.role != "admin":
-        raise Forbidden()
-    return user
+def _needs(perm: str):
+    def dep(user: Employee = Depends(current_user)) -> Employee:
+        if not user.can(perm):
+            raise Forbidden()
+        return user
+    dep.__name__ = f"need_{perm}"
+    return dep
+
+
+# One dependency per dashboard permission; every page except home asks for one.
+need = {p: _needs(p) for p in PERMISSIONS}
 
 
 def local_day_range(d_from: date, d_to: date):
@@ -125,7 +132,7 @@ def dec(value, default=None):
 
 def has_admin(db):
     return db.scalar(select(func.count()).select_from(Employee).where(
-        Employee.role == "admin", Employee.active.is_(True), Employee.password_hash.is_not(None))) > 0
+        Employee.role == ADMIN_ROLE, Employee.active.is_(True), Employee.password_hash.is_not(None))) > 0
 
 
 @router.get("/login", response_class=HTMLResponse)
@@ -166,11 +173,11 @@ async def setup(request: Request, db: Session = Depends(get_db)):
     f = await request.form()
     name, username = str(f.get("name", "")).strip(), str(f.get("username", "")).strip()
     password, pin = str(f.get("password", "")), str(f.get("pin", "")).strip()
-    errors = validate_employee_fields(db, None, name, "admin", pin, username, password, True)
+    errors = validate_employee_fields(db, None, name, ADMIN_ROLE, pin, username, password, True)
     if errors:
         return render(request, "setup.html", {"errors": errors, "form": f}, 400)
     salt, h = hash_pin(pin)
-    emp = Employee(name=name, role="admin", pin_salt=salt, pin_hash=h, username=username,
+    emp = Employee(name=name, role=ADMIN_ROLE, pin_salt=salt, pin_hash=h, username=username,
                    password_hash=hash_password(password))
     services.bump(db, emp)
     db.add(emp)
@@ -214,7 +221,7 @@ PAGE_SIZE = 100
 
 @router.get("/products", response_class=HTMLResponse)
 def products(request: Request, q: str = "", status: str = "active", low: int = 0, unit: str = "", page: int = 1,
-             user=Depends(current_user), db: Session = Depends(get_db)):
+             user=Depends(need["products"]), db: Session = Depends(get_db)):
     stmt = select(Product)
     if status == "active":
         stmt = stmt.where(Product.active.is_(True))
@@ -323,12 +330,12 @@ def form_ctx(p, form, errors=None, moves=None):
 
 
 @router.get("/products/new", response_class=HTMLResponse)
-def product_new(request: Request, user=Depends(current_user)):
+def product_new(request: Request, user=Depends(need["products"])):
     return render(request, "product_form.html", form_ctx(None, {"unit": "piece", "active": "1", "carton": "0", "cost": "0", "min_stock": "0", "stock": "0"}))
 
 
 @router.post("/products/new")
-async def product_create(request: Request, user=Depends(current_user), db: Session = Depends(get_db)):
+async def product_create(request: Request, user=Depends(need["products"]), db: Session = Depends(get_db)):
     f = await request.form()
     extra = form_barcodes(f)
     errors = product_errors(db, None, f, extra)
@@ -349,7 +356,7 @@ async def product_create(request: Request, user=Depends(current_user), db: Sessi
 
 
 @router.get("/products/{pid}", response_class=HTMLResponse)
-def product_detail(pid: int, request: Request, user=Depends(current_user), db: Session = Depends(get_db)):
+def product_detail(pid: int, request: Request, user=Depends(need["products"]), db: Session = Depends(get_db)):
     p = db.get(Product, pid)
     if not p:
         return redirect("/products")
@@ -358,7 +365,7 @@ def product_detail(pid: int, request: Request, user=Depends(current_user), db: S
 
 
 @router.post("/products/{pid}")
-async def product_update(pid: int, request: Request, user=Depends(current_user), db: Session = Depends(get_db)):
+async def product_update(pid: int, request: Request, user=Depends(need["products"]), db: Session = Depends(get_db)):
     p = db.get(Product, pid)
     if not p:
         return redirect("/products")
@@ -375,7 +382,7 @@ async def product_update(pid: int, request: Request, user=Depends(current_user),
 
 
 @router.post("/products/{pid}/stock")
-async def product_stock(pid: int, request: Request, user=Depends(current_user), db: Session = Depends(get_db)):
+async def product_stock(pid: int, request: Request, user=Depends(need["stock_adjust"]), db: Session = Depends(get_db)):
     p = db.get(Product, pid)
     f = await request.form()
     new = dec(f.get("stock"))
@@ -393,12 +400,12 @@ IMPORT_COLUMNS = ["barcode", "name", "unit", "price", "cost", "carton", "stock",
 
 
 @router.get("/products-import", response_class=HTMLResponse)
-def import_form(request: Request, user=Depends(current_user)):
+def import_form(request: Request, user=Depends(need["products"])):
     return render(request, "product_import.html", {"columns": IMPORT_COLUMNS})
 
 
 @router.get("/products-import/template.csv")
-def import_template(user=Depends(current_user)):
+def import_template(user=Depends(need["products"])):
     body = (",".join(IMPORT_COLUMNS) + "\n"
             "6281000123456,أرز بسمتي ٥ كجم,piece,2.450,2.050,6,48,10,16281000123453,6281000123999\n"
             "2100000012345,سكر أبيض,kg,0.350,0.280,0,125,20,,\n")
@@ -407,7 +414,7 @@ def import_template(user=Depends(current_user)):
 
 
 @router.post("/products-import", response_class=HTMLResponse)
-async def import_products(request: Request, user=Depends(current_user), db: Session = Depends(get_db)):
+async def import_products(request: Request, user=Depends(need["products"]), db: Session = Depends(get_db)):
     f = await request.form()
     upload = f.get("file")
     if not upload or not hasattr(upload, "read"):
@@ -460,12 +467,12 @@ async def import_products(request: Request, user=Depends(current_user), db: Sess
 # ---------- suppliers ----------
 
 @router.get("/suppliers", response_class=HTMLResponse)
-def suppliers(request: Request, user=Depends(current_user), db: Session = Depends(get_db)):
+def suppliers(request: Request, user=Depends(need["products"]), db: Session = Depends(get_db)):
     return render(request, "suppliers.html", {"items": db.scalars(select(Supplier).order_by(Supplier.active.desc(), Supplier.name)).all()})
 
 
 @router.post("/suppliers")
-async def supplier_save(request: Request, user=Depends(current_user), db: Session = Depends(get_db)):
+async def supplier_save(request: Request, user=Depends(need["products"]), db: Session = Depends(get_db)):
     f = await request.form()
     name = str(f.get("name", "")).strip()
     sid = int(f.get("id") or 0)
@@ -488,7 +495,7 @@ async def supplier_save(request: Request, user=Depends(current_user), db: Sessio
 # ---------- receipts ----------
 
 @router.get("/receipts", response_class=HTMLResponse)
-def receipts(request: Request, status: str = "open", user=Depends(current_user), db: Session = Depends(get_db)):
+def receipts(request: Request, status: str = "open", user=Depends(need["receipts"]), db: Session = Depends(get_db)):
     stmt = select(Receipt).order_by(Receipt.created_at.desc()).limit(200)
     if status in ("open", "pending", "received", "cancelled", "rejected"):
         stmt = stmt.where(Receipt.status == status)
@@ -552,12 +559,12 @@ async def save_receipt(request, db, r: Receipt | None):
 
 
 @router.get("/receipts/new", response_class=HTMLResponse)
-def receipt_new(request: Request, user=Depends(current_user), db: Session = Depends(get_db)):
+def receipt_new(request: Request, user=Depends(need["receipts"]), db: Session = Depends(get_db)):
     return render(request, "receipt_form.html", receipt_form_ctx(db))
 
 
 @router.post("/receipts/new")
-async def receipt_create(request: Request, user=Depends(current_user), db: Session = Depends(get_db)):
+async def receipt_create(request: Request, user=Depends(need["receipts"]), db: Session = Depends(get_db)):
     r, err = await save_receipt(request, db, None)
     if err:
         return err
@@ -566,7 +573,7 @@ async def receipt_create(request: Request, user=Depends(current_user), db: Sessi
 
 
 @router.get("/receipts/{rid}", response_class=HTMLResponse)
-def receipt_detail(rid: int, request: Request, user=Depends(current_user), db: Session = Depends(get_db)):
+def receipt_detail(rid: int, request: Request, user=Depends(need["receipts"]), db: Session = Depends(get_db)):
     r = db.get(Receipt, rid)
     if not r:
         return redirect("/receipts")
@@ -574,7 +581,7 @@ def receipt_detail(rid: int, request: Request, user=Depends(current_user), db: S
 
 
 @router.get("/receipts/{rid}/edit", response_class=HTMLResponse)
-def receipt_edit(rid: int, request: Request, user=Depends(current_user), db: Session = Depends(get_db)):
+def receipt_edit(rid: int, request: Request, user=Depends(need["receipts"]), db: Session = Depends(get_db)):
     r = db.get(Receipt, rid)
     if not r or r.status != "open":
         return redirect(f"/receipts/{rid}")
@@ -582,7 +589,7 @@ def receipt_edit(rid: int, request: Request, user=Depends(current_user), db: Ses
 
 
 @router.post("/receipts/{rid}/edit")
-async def receipt_update(rid: int, request: Request, user=Depends(current_user), db: Session = Depends(get_db)):
+async def receipt_update(rid: int, request: Request, user=Depends(need["receipts"]), db: Session = Depends(get_db)):
     r = db.get(Receipt, rid)
     if not r or r.status != "open":
         flash(request, "السند ده اتقفل ومينفعش يتعدل", "error")
@@ -595,7 +602,7 @@ async def receipt_update(rid: int, request: Request, user=Depends(current_user),
 
 
 @router.post("/receipts/{rid}/approve")
-async def receipt_approve(rid: int, request: Request, user=Depends(current_user), db: Session = Depends(get_db)):
+async def receipt_approve(rid: int, request: Request, user=Depends(need["receipts"]), db: Session = Depends(get_db)):
     r = db.get(Receipt, rid)
     if not r or r.status != "pending":
         return redirect(f"/receipts/{rid}")
@@ -619,7 +626,7 @@ async def receipt_approve(rid: int, request: Request, user=Depends(current_user)
 
 
 @router.post("/receipts/{rid}/reject")
-def receipt_reject(rid: int, request: Request, user=Depends(current_user), db: Session = Depends(get_db)):
+def receipt_reject(rid: int, request: Request, user=Depends(need["receipts"]), db: Session = Depends(get_db)):
     r = db.get(Receipt, rid)
     if r and r.status == "pending":
         r.status, r.approved_by, r.approved_at = "rejected", user.id, now()
@@ -630,7 +637,7 @@ def receipt_reject(rid: int, request: Request, user=Depends(current_user), db: S
 
 
 @router.post("/receipts/{rid}/cancel")
-def receipt_cancel(rid: int, request: Request, user=Depends(current_user), db: Session = Depends(get_db)):
+def receipt_cancel(rid: int, request: Request, user=Depends(need["receipts"]), db: Session = Depends(get_db)):
     r = db.get(Receipt, rid)
     if r and r.status == "open":
         r.status = "cancelled"
@@ -643,7 +650,7 @@ def receipt_cancel(rid: int, request: Request, user=Depends(current_user), db: S
 # ---------- sales & reports ----------
 
 @router.get("/sales", response_class=HTMLResponse)
-def sales(request: Request, d_from: str = "", d_to: str = "", employee: int = 0, user=Depends(current_user), db: Session = Depends(get_db)):
+def sales(request: Request, d_from: str = "", d_to: str = "", employee: int = 0, user=Depends(need["sales"]), db: Session = Depends(get_db)):
     today = datetime.now(TZ).date()
     f, t = parse_date(d_from, today), parse_date(d_to, today)
     start, end = local_day_range(f, t)
@@ -658,7 +665,7 @@ def sales(request: Request, d_from: str = "", d_to: str = "", employee: int = 0,
 
 
 @router.get("/sales/{sid}", response_class=HTMLResponse)
-def sale_detail(sid: str, request: Request, user=Depends(current_user), db: Session = Depends(get_db)):
+def sale_detail(sid: str, request: Request, user=Depends(need["sales"]), db: Session = Depends(get_db)):
     try:
         s = db.get(Sale, sid)
     except Exception:
@@ -669,7 +676,7 @@ def sale_detail(sid: str, request: Request, user=Depends(current_user), db: Sess
 
 
 @router.get("/reports", response_class=HTMLResponse)
-def reports(request: Request, d_from: str = "", d_to: str = "", user=Depends(current_user), db: Session = Depends(get_db)):
+def reports(request: Request, d_from: str = "", d_to: str = "", user=Depends(need["sales"]), db: Session = Depends(get_db)):
     today = datetime.now(TZ).date()
     f, t = parse_date(d_from, today.replace(day=1)), parse_date(d_to, today)
     start, end = local_day_range(f, t)
@@ -709,7 +716,7 @@ def reports(request: Request, d_from: str = "", d_to: str = "", user=Depends(cur
 # ---------- counts ----------
 
 @router.get("/counts", response_class=HTMLResponse)
-def counts(request: Request, status: str = "submitted", user=Depends(current_user), db: Session = Depends(get_db)):
+def counts(request: Request, status: str = "submitted", user=Depends(need["counts"]), db: Session = Depends(get_db)):
     stmt = select(CountSession).order_by(CountSession.finished_at.desc()).limit(200)
     if status in ("submitted", "approved", "rejected"):
         stmt = stmt.where(CountSession.status == status)
@@ -717,7 +724,7 @@ def counts(request: Request, status: str = "submitted", user=Depends(current_use
 
 
 @router.get("/counts/{cid}", response_class=HTMLResponse)
-def count_detail(cid: str, request: Request, user=Depends(current_user), db: Session = Depends(get_db)):
+def count_detail(cid: str, request: Request, user=Depends(need["counts"]), db: Session = Depends(get_db)):
     try:
         c = db.get(CountSession, cid)
     except Exception:
@@ -733,7 +740,7 @@ def count_detail(cid: str, request: Request, user=Depends(current_user), db: Ses
 
 
 @router.post("/counts/{cid}/{action}")
-def count_review(cid: str, action: str, request: Request, user=Depends(current_user), db: Session = Depends(get_db)):
+def count_review(cid: str, action: str, request: Request, user=Depends(need["counts"]), db: Session = Depends(get_db)):
     c = db.get(CountSession, cid)
     if not c or c.status != "submitted" or action not in ("approve", "reject"):
         return redirect("/counts")
@@ -753,8 +760,9 @@ def validate_employee_fields(db, emp_id, name, role, pin, username, password, ne
     errors = []
     if not name:
         errors.append("الاسم مطلوب")
-    if role not in ROLES:
-        errors.append("اختار الوظيفة")
+    r = db.get(Role, role) if role else None
+    if r is None:
+        errors.append("اختار الدور")
     if pin or emp_id is None:
         if not (pin.isdigit() and 4 <= len(pin) <= 6):
             errors.append("الرقم السري لازم يكون من 4 إلى 6 أرقام")
@@ -763,7 +771,7 @@ def validate_employee_fields(db, emp_id, name, role, pin, username, password, ne
                 if verify_pin(pin, other.pin_salt, other.pin_hash):
                     errors.append("الرقم السري ده مستخدم لموظف تاني، اختار رقم مختلف")
                     break
-    if role in ("supervisor", "admin") and username:
+    if username:
         if db.scalar(select(Employee.id).where(Employee.username == username, Employee.id != (emp_id or 0))):
             errors.append("اسم المستخدم مستخدم قبل كده")
         if need_password and len(password) < 8:
@@ -773,39 +781,47 @@ def validate_employee_fields(db, emp_id, name, role, pin, username, password, ne
     return errors
 
 
+def all_roles(db):
+    return db.scalars(select(Role).order_by(case((Role.key == ADMIN_ROLE, 1), else_=0), Role.name)).all()
+
+
 @router.get("/employees", response_class=HTMLResponse)
-def employees(request: Request, user=Depends(admin_user), db: Session = Depends(get_db)):
-    return render(request, "employees.html", {"items": db.scalars(select(Employee).order_by(Employee.active.desc(), Employee.name)).all()})
+def employees(request: Request, user=Depends(need["employees"]), db: Session = Depends(get_db)):
+    return render(request, "employees.html", {
+        "items": db.scalars(select(Employee).order_by(Employee.active.desc(), Employee.name)).all()})
 
 
 @router.get("/employees/new", response_class=HTMLResponse)
-def employee_new(request: Request, user=Depends(admin_user)):
-    return render(request, "employee_form.html", {"e": None, "form": {"role": "cashier", "active": "1"}})
+def employee_new(request: Request, user=Depends(need["employees"]), db: Session = Depends(get_db)):
+    roles = all_roles(db)
+    return render(request, "employee_form.html", {"e": None, "roles": roles,
+                                                  "form": {"role": roles[0].key if roles else "", "active": "1"}})
 
 
 @router.get("/employees/{eid}", response_class=HTMLResponse)
-def employee_edit(eid: int, request: Request, user=Depends(admin_user), db: Session = Depends(get_db)):
+def employee_edit(eid: int, request: Request, user=Depends(need["employees"]), db: Session = Depends(get_db)):
     e = db.get(Employee, eid)
     if not e:
         return redirect("/employees")
-    return render(request, "employee_form.html", {"e": e, "form": None})
+    return render(request, "employee_form.html", {"e": e, "form": None, "roles": all_roles(db)})
 
 
 @router.post("/employees/{eid}")
-async def employee_save(eid: str, request: Request, user=Depends(admin_user), db: Session = Depends(get_db)):
+async def employee_save(eid: str, request: Request, user=Depends(need["employees"]), db: Session = Depends(get_db)):
     e = None if eid == "new" else db.get(Employee, int(eid))
     f = await request.form()
-    name, role = str(f.get("name", "")).strip(), f.get("role", "")
+    name, role = str(f.get("name", "")).strip(), str(f.get("role", ""))
+    r = db.get(Role, role)
     pin = str(f.get("pin", "")).strip()
-    username = str(f.get("username", "")).strip() if role in ("supervisor", "admin") else ""
+    username = str(f.get("username", "")).strip() if r and "dashboard" in r.perms else ""
     password = str(f.get("password", ""))
     active = f.get("active") == "1"
     need_pw = bool(username) and (password != "" or not (e and e.password_hash))
     errors = validate_employee_fields(db, e.id if e else None, name, role, pin, username, password, need_pw)
-    if e and e.id == user.id and (role != "admin" or not active):
-        errors.append("مينفعش تشيل صلاحية المدير من حسابك أو توقفه")
+    if e and e.id == user.id and (not r or "employees" not in r.perms or "dashboard" not in r.perms or not active):
+        errors.append("مينفعش تشيل من حسابك صلاحية الموظفين أو تدخل اللوحة، أو توقفه")
     if errors:
-        return render(request, "employee_form.html", {"e": e, "form": f, "errors": errors}, 400)
+        return render(request, "employee_form.html", {"e": e, "form": f, "errors": errors, "roles": all_roles(db)}, 400)
     if e is None:
         e = Employee()
         db.add(e)
@@ -823,16 +839,95 @@ async def employee_save(eid: str, request: Request, user=Depends(admin_user), db
     return redirect("/employees")
 
 
+# ---------- roles ----------
+
+PERM_GROUPS = {}
+for _k, (_label, _group) in PERMISSIONS.items():
+    PERM_GROUPS.setdefault(_group, []).append((_k, _label))
+templates.env.globals.update(PERM_GROUPS=PERM_GROUPS)
+
+
+@router.get("/roles", response_class=HTMLResponse)
+def roles(request: Request, user=Depends(need["employees"]), db: Session = Depends(get_db)):
+    used = dict(db.execute(select(Employee.role, func.count()).where(Employee.active.is_(True)).group_by(Employee.role)).all())
+    return render(request, "roles.html", {"items": all_roles(db), "used": used})
+
+
+@router.get("/roles/new", response_class=HTMLResponse)
+def role_new(request: Request, user=Depends(need["employees"])):
+    return render(request, "role_form.html", {"r": None, "name": "", "perms_sel": set()})
+
+
+@router.get("/roles/{key}", response_class=HTMLResponse)
+def role_edit(key: str, request: Request, user=Depends(need["employees"]), db: Session = Depends(get_db)):
+    r = db.get(Role, key)
+    if not r:
+        return redirect("/roles")
+    count = db.scalar(select(func.count()).select_from(Employee).where(Employee.role == key))
+    return render(request, "role_form.html", {"r": r, "name": r.name, "perms_sel": r.perms, "count": count})
+
+
+@router.post("/roles/{key}")
+async def role_save(key: str, request: Request, user=Depends(need["employees"]), db: Session = Depends(get_db)):
+    r = None if key == "new" else db.get(Role, key)
+    if key != "new" and r is None:
+        return redirect("/roles")
+    if r is not None and r.is_system:
+        flash(request, "دور المدير ثابت وليه كل الصلاحيات، علشان محدش يقفل النظام على نفسه.", "error")
+        return redirect("/roles")
+    f = await request.form()
+    name = str(f.get("name", "")).strip()
+    perms = {p for p in f.getlist("perm") if p in PERMISSIONS}
+    errors = []
+    if not name:
+        errors.append("اسم الدور مطلوب")
+    elif db.scalar(select(Role.key).where(func.lower(Role.name) == name.lower(), Role.key != (r.key if r else ""))):
+        errors.append("فيه دور بنفس الاسم")
+    if not perms:
+        errors.append("اختار صلاحية واحدة على الأقل")
+    if r is not None and user.role == r.key and not {"employees", "dashboard"} <= perms:
+        errors.append("ده دورك أنت. مينفعش تشيل منه «الموظفين والأدوار» أو «دخول لوحة التحكم» وإلا هتقفل على نفسك.")
+    if errors:
+        count = db.scalar(select(func.count()).select_from(Employee).where(Employee.role == r.key)) if r else 0
+        return render(request, "role_form.html", {"r": r, "name": name, "perms_sel": perms, "errors": errors, "count": count}, 400)
+    if r is None:
+        r = Role(key="r" + os.urandom(4).hex())
+        db.add(r)
+    r.name, r.permissions = name, ",".join(sorted(perms))
+    db.flush()
+    # Devices only re-download employees whose version moved, so push the new permissions to them.
+    for e in db.scalars(select(Employee).where(Employee.role == r.key)):
+        services.bump(db, e)
+    db.commit()
+    flash(request, f"تم حفظ دور «{r.name}». الأجهزة هتاخد الصلاحيات الجديدة في أول مزامنة.")
+    return redirect("/roles")
+
+
+@router.post("/roles/{key}/delete")
+def role_delete(key: str, request: Request, user=Depends(need["employees"]), db: Session = Depends(get_db)):
+    r = db.get(Role, key)
+    if not r or r.is_system:
+        return redirect("/roles")
+    count = db.scalar(select(func.count()).select_from(Employee).where(Employee.role == key))
+    if count:
+        flash(request, f"مينفعش تمسح «{r.name}»: عليه {count} موظف (حتى الموقوفين). انقلهم لدور تاني الأول.", "error")
+        return redirect(f"/roles/{key}")
+    db.delete(r)
+    db.commit()
+    flash(request, f"تم مسح دور «{r.name}»")
+    return redirect("/roles")
+
+
 # ---------- devices ----------
 
 @router.get("/devices", response_class=HTMLResponse)
-def devices(request: Request, user=Depends(admin_user), db: Session = Depends(get_db)):
+def devices(request: Request, user=Depends(need["devices"]), db: Session = Depends(get_db)):
     items = db.scalars(select(Device).order_by(Device.active.desc(), Device.name)).all()
     return render(request, "devices.html", {"items": items, "now": now(), "show_code": request.session.pop("show_code", None)})
 
 
 @router.post("/devices")
-async def device_create(request: Request, user=Depends(admin_user), db: Session = Depends(get_db)):
+async def device_create(request: Request, user=Depends(need["devices"]), db: Session = Depends(get_db)):
     f = await request.form()
     name = str(f.get("name", "")).strip()
     if not name:
@@ -857,7 +952,7 @@ def set_pairing(db, d: Device):
 
 
 @router.post("/devices/{did}/{action}")
-def device_action(did: int, action: str, request: Request, user=Depends(admin_user), db: Session = Depends(get_db)):
+def device_action(did: int, action: str, request: Request, user=Depends(need["devices"]), db: Session = Depends(get_db)):
     d = db.get(Device, did)
     if not d:
         return redirect("/devices")
@@ -882,7 +977,7 @@ def pg_dump_cmd():
 
 
 @router.get("/backup", response_class=HTMLResponse)
-def backup_page(request: Request, user=Depends(admin_user)):
+def backup_page(request: Request, user=Depends(need["backup"])):
     log = Path(config.BACKUP_DIR) / "backup.log"
     entries = []
     if log.exists():
@@ -897,7 +992,7 @@ def backup_page(request: Request, user=Depends(admin_user)):
 
 
 @router.get("/backup/download")
-def backup_download(user=Depends(admin_user)):
+def backup_download(user=Depends(need["backup"])):
     cmd = pg_dump_cmd()
     if not cmd:
         return redirect("/backup")

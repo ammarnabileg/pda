@@ -113,7 +113,7 @@ def test_cancelled_receipt_is_rejected(device_client, seed, db, admin_client):
 
 def test_count_push_and_approval_keeps_later_sales(device_client, admin_client, seed, db):
     cid = str(uuid.uuid4())
-    device_client.post("/api/v1/sync/push", json={"counts": [{"id": cid, "employee_id": seed["cashier"].id,
+    device_client.post("/api/v1/sync/push", json={"counts": [{"id": cid, "employee_id": seed["admin"].id,
         "finished_at": "2026-11-01T09:00:00Z", "lines": [{"product_id": seed["rice"].id, "counted": 45}]}]})
     db.expire_all()
     assert db.get(Product, seed["rice"].id).stock == Decimal("48")  # nothing changes before approval

@@ -5,18 +5,18 @@
 
 <h2>محتاج إجراء</h2>
 <div class="needs">
-  <a class="need {{ 'warn' if open_receipts else 'good' }}" href="/receipts?status=open">{{ icon('truck') }}<div><b>{{ open_receipts }}</b><small>{{ 'سند مستني الاستلام على الأجهزة' if open_receipts else 'مفيش سندات مستنية' }}</small></div></a>
-  {% if pending_receipts %}<a class="need bad" href="/receipts?status=pending">{{ icon('truck') }}<div><b>{{ pending_receipts }}</b><small>سند من الأجهزة مستني موافقتك</small></div></a>{% endif %}
-  <a class="need {{ 'bad' if pending_counts else 'good' }}" href="/counts?status=submitted">{{ icon('check') }}<div><b>{{ pending_counts }}</b><small>{{ 'جرد مستني اعتمادك' if pending_counts else 'مفيش جرد مستني' }}</small></div></a>
-  <a class="need {{ 'bad' if stale else 'good' }}" href="/devices">{{ icon('device') }}<div><b>{{ stale|length }}</b><small>{{ 'جهاز ماتصلش من أكتر من ساعة' if stale else 'كل الأجهزة متصلة' }}</small></div></a>
-  <a class="need {{ 'warn' if low_count else 'good' }}" href="/products?low=1">{{ icon('warn') }}<div><b>{{ low_count }}</b><small>{{ 'صنف تحت حد الطلب' if low_count else 'مفيش نواقص' }}</small></div></a>
+  {% if user.can('receipts') %}<a class="need {{ 'warn' if open_receipts else 'good' }}" href="/receipts?status=open">{{ icon('truck') }}<div><b>{{ open_receipts }}</b><small>{{ 'سند مستني الاستلام على الأجهزة' if open_receipts else 'مفيش سندات مستنية' }}</small></div></a>
+  {% if pending_receipts %}<a class="need bad" href="/receipts?status=pending">{{ icon('truck') }}<div><b>{{ pending_receipts }}</b><small>سند من الأجهزة مستني موافقتك</small></div></a>{% endif %}{% endif %}
+  {% if user.can('counts') %}<a class="need {{ 'bad' if pending_counts else 'good' }}" href="/counts?status=submitted">{{ icon('check') }}<div><b>{{ pending_counts }}</b><small>{{ 'جرد مستني اعتمادك' if pending_counts else 'مفيش جرد مستني' }}</small></div></a>{% endif %}
+  <a class="need {{ 'bad' if stale else 'good' }}" href="{{ '/devices' if user.can('devices') else '#' }}">{{ icon('device') }}<div><b>{{ stale|length }}</b><small>{{ 'جهاز ماتصلش من أكتر من ساعة' if stale else 'كل الأجهزة متصلة' }}</small></div></a>
+  <a class="need {{ 'warn' if low_count else 'good' }}" href="{{ '/products?low=1' if user.can('products') else '#' }}">{{ icon('warn') }}<div><b>{{ low_count }}</b><small>{{ 'صنف تحت حد الطلب' if low_count else 'مفيش نواقص' }}</small></div></a>
 </div>
 
 <h2>أرقام اليوم</h2>
 <div class="stats">
-  <a class="stat" href="/sales"><small>مبيعات اليوم</small><b>{{ sales_total|money }}</b> د.ك</a>
-  <a class="stat" href="/sales"><small>فواتير اليوم</small><b>{{ sales_count }}</b></a>
-  <a class="stat" href="/products"><small>الأصناف الفعّالة</small><b>{{ products }}</b></a>
+  {% if user.can('sales') %}<a class="stat" href="/sales"><small>مبيعات اليوم</small><b>{{ sales_total|money }}</b> د.ك</a>
+  <a class="stat" href="/sales"><small>فواتير اليوم</small><b>{{ sales_count }}</b></a>{% endif %}
+  <a class="stat" href="{{ '/products' if user.can('products') else '#' }}"><small>الأصناف الفعّالة</small><b>{{ products }}</b></a>
 </div>
 
 <div class="grid" style="align-items:start">
@@ -26,7 +26,7 @@
     {% for d in devices %}<tr><td>{{ d.name }}</td>
       <td>{% if not d.token_hash %}<span class="pill p-gray">مش مربوط</span>{% elif d.last_seen and ((now - d.last_seen).total_seconds() // 60)|int < 3 %}<span class="pill p-ok">{{ icon('ok') }} متصل الآن</span>{% elif d in stale %}<span class="pill p-red">{{ icon('warn') }} مش متصل</span>{% else %}<span class="pill p-warn">من {{ ((now - d.last_seen).total_seconds() // 60)|int }} دقيقة</span>{% endif %}</td>
       <td>{{ d.last_seen|dt }}</td></tr>
-    {% else %}<tr><td colspan="3" class="muted">لا توجد أجهزة. {% if user.role == "admin" %}<a href="/devices">أضف جهاز</a>{% endif %}</td></tr>{% endfor %}
+    {% else %}<tr><td colspan="3" class="muted">لا توجد أجهزة. {% if user.can("devices") %}<a href="/devices">أضف جهاز</a>{% endif %}</td></tr>{% endfor %}
     </table></div>
     <h2>أصناف تحت حد الطلب</h2>
     <div class="table-wrap"><table><thead><tr><th>الصنف</th><th class="num">الرصيد</th><th class="num">حد الطلب</th></tr></thead>
@@ -35,12 +35,12 @@
     {% if low_count > low|length %}<tr><td colspan="3"><a href="/products?low=1">عرض الكل ({{ low_count }})</a></td></tr>{% endif %}
     </table></div>
   </div>
-  <div>
+  {% if user.can('sales') %}<div>
     <h2>آخر الفواتير</h2>
     <div class="table-wrap"><table><thead><tr><th>الوقت</th><th>الموظف</th><th class="num">المبلغ</th></tr></thead>
     {% for s in recent %}<tr><td><a href="/sales/{{ s.id }}">{{ s.created_at|dt }}</a></td><td>{{ s.employee.name if s.employee else '—' }}</td><td class="num">{{ s.total|money }}</td></tr>
     {% else %}<tr><td colspan="3" class="muted">لا توجد فواتير بعد</td></tr>{% endfor %}
     </table></div>
-  </div>
+  </div>{% endif %}
 </div>
 {% endblock %}

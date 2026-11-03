@@ -71,8 +71,8 @@ def product_dict(p: Product):
 
 
 def employee_dict(e: Employee):
-    return {"id": e.id, "name": e.name, "role": e.role, "pin_salt": e.pin_salt,
-            "pin_hash": e.pin_hash, "active": e.active}
+    return {"id": e.id, "name": e.name, "role": e.role, "role_name": e.role_name, "pin_salt": e.pin_salt,
+            "pin_hash": e.pin_hash, "active": e.active, "permissions": sorted(e.perms)}
 
 
 def receipt_dict(r: Receipt):

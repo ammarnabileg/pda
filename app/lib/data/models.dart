@@ -90,10 +90,14 @@ class ScanHit {
 class Employee {
   final int id;
   final String name;
-  final String role; // cashier | storekeeper | supervisor | admin
+  final String role; // role key; roles and their permissions are set in the dashboard
+  final String? roleLabel;
   final String pinSalt;
   final String pinHash;
   final bool active;
+
+  /// Null only for data from a server older than editable roles; then [defaultPermissions] applies.
+  final Set<String>? permissions;
 
   const Employee({
     required this.id,
@@ -102,36 +106,53 @@ class Employee {
     required this.pinSalt,
     required this.pinHash,
     required this.active,
+    this.roleLabel,
+    this.permissions,
   });
 
-  bool get canSell => role != 'storekeeper';
-  bool get canStock => role != 'cashier';
-  bool get isSupervisor => role == 'supervisor' || role == 'admin';
+  /// The starting roles, used until the server sends real permissions.
+  static const defaultPermissions = {
+    'cashier': {'sale', 'price', 'see_cost'},
+    'storekeeper': {'price', 'see_cost', 'count', 'receive', 'new_receipt'},
+    'supervisor': {'sale', 'price', 'see_cost', 'count', 'receive', 'new_receipt', 'device_admin'},
+    'admin': {'sale', 'price', 'see_cost', 'count', 'receive', 'new_receipt', 'device_admin'},
+  };
+  static const defaultNames = {'cashier': 'كاشير', 'storekeeper': 'أمين مخزن', 'supervisor': 'مشرف', 'admin': 'مدير'};
 
-  static const roleNames = {'cashier': 'كاشير', 'storekeeper': 'أمين مخزن', 'supervisor': 'مشرف', 'admin': 'مدير'};
+  bool can(String perm) => (permissions ?? defaultPermissions[role] ?? const <String>{}).contains(perm);
+  String get roleName => roleLabel ?? defaultNames[role] ?? role;
 
   Map<String, Object?> toRow() => {
     'id': id,
     'name': name,
     'role': role,
+    'role_name': roleLabel,
+    'permissions': permissions == null ? null : (permissions!.toList()..sort()).join(','),
     'pin_salt': pinSalt,
     'pin_hash': pinHash,
     'active': active ? 1 : 0,
   };
 
-  factory Employee.fromRow(Map<String, Object?> r) => Employee(
-    id: r['id'] as int,
-    name: r['name'] as String,
-    role: r['role'] as String,
-    pinSalt: r['pin_salt'] as String,
-    pinHash: r['pin_hash'] as String,
-    active: (r['active'] as int) == 1,
-  );
+  factory Employee.fromRow(Map<String, Object?> r) {
+    final perms = r['permissions'] as String?;
+    return Employee(
+      id: r['id'] as int,
+      name: r['name'] as String,
+      role: r['role'] as String,
+      roleLabel: r['role_name'] as String?,
+      permissions: perms?.split(',').where((p) => p.isNotEmpty).toSet(),
+      pinSalt: r['pin_salt'] as String,
+      pinHash: r['pin_hash'] as String,
+      active: (r['active'] as int) == 1,
+    );
+  }
 
   factory Employee.fromApi(Map<String, dynamic> j) => Employee(
     id: j['id'] as int,
     name: j['name'] as String,
     role: j['role'] as String,
+    roleLabel: j['role_name'] as String?,
+    permissions: (j['permissions'] as List?)?.cast<String>().toSet(),
     pinSalt: j['pin_salt'] as String,
     pinHash: j['pin_hash'] as String,
     active: j['active'] as bool,

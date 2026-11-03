@@ -11,18 +11,61 @@ from .db import Base
 Money = Numeric(12, 3)
 Qty = Numeric(14, 3)
 
-ROLES = {
-    "cashier": "كاشير",
-    "storekeeper": "أمين مخزن",
-    "supervisor": "مشرف",
-    "admin": "مدير",
+# Every permission the system checks. Roles (editable in the dashboard) are sets of these.
+# key: (label, group)
+PERMISSIONS = {
+    # on the device
+    "sale": ("البيع", "الجهاز"),
+    "price": ("سعر صنف", "الجهاز"),
+    "see_cost": ("يشوف سعر الشراء", "الجهاز"),
+    "count": ("الجرد", "الجهاز"),
+    "receive": ("استلام السندات", "الجهاز"),
+    "new_receipt": ("استلام من غير سند", "الجهاز"),
+    "device_admin": ("فك ربط الجهاز ورؤية العمليات المرفوضة", "الجهاز"),
+    # in the dashboard
+    "dashboard": ("دخول لوحة التحكم", "لوحة التحكم"),
+    "products": ("الأصناف والموردين والاستيراد", "لوحة التحكم"),
+    "stock_adjust": ("تعديل الرصيد يدوياً", "لوحة التحكم"),
+    "receipts": ("سندات الاستلام والموافقة عليها", "لوحة التحكم"),
+    "sales": ("المبيعات والتقارير والأرباح", "لوحة التحكم"),
+    "counts": ("مراجعة الجرد واعتماده", "لوحة التحكم"),
+    "employees": ("الموظفين والأدوار والصلاحيات", "لوحة التحكم"),
+    "devices": ("الأجهزة وربطها", "لوحة التحكم"),
+    "backup": ("النسخ الاحتياطي", "لوحة التحكم"),
 }
+ALL_PERMISSIONS = frozenset(PERMISSIONS)
+
+# Starting roles, created once on an empty database; all but "admin" can be changed or removed.
+DEFAULT_ROLES = [
+    ("cashier", "كاشير", {"sale", "price", "see_cost"}),
+    ("storekeeper", "أمين مخزن", {"price", "see_cost", "count", "receive", "new_receipt"}),
+    ("supervisor", "مشرف", ALL_PERMISSIONS - {"employees", "devices", "backup"}),
+    ("admin", "مدير", ALL_PERMISSIONS),
+]
+ADMIN_ROLE = "admin"  # always has every permission, so the system can never lock everyone out
 UNITS = {"piece": "حبة", "kg": "كجم"}
 MODES = {"piece": "حبة", "carton": "كرتون", "kg": "كجم"}
 
 
 def now():
     return datetime.now(timezone.utc)
+
+
+class Role(Base):
+    __tablename__ = "roles"
+    key: Mapped[str] = mapped_column(String(40), primary_key=True)
+    name: Mapped[str] = mapped_column(String(80), unique=True)
+    permissions: Mapped[str] = mapped_column(Text, default="")  # comma separated keys
+
+    @property
+    def perms(self) -> frozenset:
+        if self.key == ADMIN_ROLE:
+            return ALL_PERMISSIONS
+        return frozenset(p for p in self.permissions.split(",") if p in PERMISSIONS)
+
+    @property
+    def is_system(self):
+        return self.key == ADMIN_ROLE
 
 
 class Employee(Base):
@@ -38,9 +81,22 @@ class Employee(Base):
     version: Mapped[int] = mapped_column(BigInteger, default=0, index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
 
+    role_obj: Mapped[Role | None] = relationship(primaryjoin="foreign(Employee.role) == Role.key", viewonly=True, lazy="joined")
+
+    @property
+    def perms(self) -> frozenset:
+        return self.role_obj.perms if self.role_obj else frozenset()
+
+    def can(self, perm: str) -> bool:
+        return perm in self.perms
+
+    @property
+    def role_name(self):
+        return self.role_obj.name if self.role_obj else self.role
+
     @property
     def can_dashboard(self):
-        return self.role in ("supervisor", "admin") and bool(self.password_hash)
+        return self.can("dashboard") and bool(self.password_hash)
 
 
 class Device(Base):

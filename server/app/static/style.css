@@ -85,3 +85,6 @@ legend{font-weight:800;padding:0 6px}
 .empty .btn{margin:6px}
 .range{background:#fff;border:1px solid var(--line);border-radius:12px;padding:8px 12px;margin-bottom:12px;font-weight:700}
 @media print{.side,.no-print{display:none}.main{padding:0}}
+.perm-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:8px 18px;margin-bottom:8px}
+.perm-grid .check{font-weight:600;min-height:40px}
+.btn.danger{color:#b42318;border-color:#f3c0bb}

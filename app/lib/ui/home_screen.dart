@@ -34,7 +34,7 @@ class _HomeScreenState extends State<HomeScreen> {
     setState(() {
       saleItems = sale is Map ? ((sale['lines'] as List?)?.length ?? 0) : 0;
       countItems = count is Map ? ((count['lines'] as List?)?.length ?? 0) : 0;
-      openReceipts = rec.length;
+      openReceipts = (AppScope.read(context).employee?.can('receive') ?? false) ? rec.length : 0;
       decisions = dec;
     });
   }
@@ -46,6 +46,7 @@ class _HomeScreenState extends State<HomeScreen> {
 
   Future<void> _onScan(String code) async {
     final app = AppScope.read(context);
+    if (!(app.employee?.can('price') ?? false)) return;
     final h = await findScanned(context, app, code);
     if (h != null && mounted) _open(PriceScreen(initial: h));
   }
@@ -90,7 +91,7 @@ class _HomeScreenState extends State<HomeScreen> {
               child: ListView(
                 padding: const EdgeInsets.all(S.edge),
                 children: [
-                  if (decisions > 0 && e.canStock)
+                  if (decisions > 0 && (e.can('receive') || e.can('new_receipt')))
                     Padding(
                       padding: const EdgeInsets.only(bottom: S.s),
                       child: Material(
@@ -114,7 +115,7 @@ class _HomeScreenState extends State<HomeScreen> {
                         ),
                       ),
                     ),
-                  if (app.rejected > 0 && e.isSupervisor)
+                  if (app.rejected > 0 && e.can('device_admin'))
                     CardBox(
                       color: cOrange2,
                       border: cOrange,
@@ -128,7 +129,7 @@ class _HomeScreenState extends State<HomeScreen> {
                       const Icon(Icons.person_outline, size: 22, color: cMuted),
                       const SizedBox(width: S.xs),
                       Expanded(
-                        child: Text('${e.name} · ${roleName(e.role)}', style: T.label, overflow: TextOverflow.ellipsis),
+                        child: Text('${e.name} · ${e.roleName}', style: T.label, overflow: TextOverflow.ellipsis),
                       ),
                       TextButton.icon(
                         onPressed: _switchUser,
@@ -138,7 +139,7 @@ class _HomeScreenState extends State<HomeScreen> {
                     ],
                   ),
                   const SizedBox(height: S.xs),
-                  if (e.canSell)
+                  if (e.can('sale'))
                     _MenuItem(
                       title: 'بيع',
                       sub: 'فاتورة للزبون',
@@ -147,13 +148,14 @@ class _HomeScreenState extends State<HomeScreen> {
                       badge: saleItems > 0 ? 'فاتورة مفتوحة: $saleItems صنف' : null,
                       onTap: () => _open(const SaleScreen()),
                     ),
-                  _MenuItem(
-                    title: 'سعر صنف',
-                    sub: 'امسح أي صنف من هنا لمعرفة سعره',
-                    icon: Icons.sell_outlined,
-                    onTap: () => _open(const PriceScreen()),
-                  ),
-                  if (e.canStock) ...[
+                  if (e.can('price'))
+                    _MenuItem(
+                      title: 'سعر صنف',
+                      sub: 'امسح أي صنف من هنا لمعرفة سعره',
+                      icon: Icons.sell_outlined,
+                      onTap: () => _open(const PriceScreen()),
+                    ),
+                  if (e.can('count'))
                     _MenuItem(
                       title: 'جرد',
                       sub: 'عدّ البضاعة على الرف',
@@ -161,6 +163,7 @@ class _HomeScreenState extends State<HomeScreen> {
                       badge: countItems > 0 ? 'جرد مفتوح: $countItems صنف' : null,
                       onTap: () => _open(const CountScreen()),
                     ),
+                  if (e.can('receive') || e.can('new_receipt'))
                     _MenuItem(
                       title: 'استلام',
                       sub: 'بضاعة من المورد',
@@ -168,7 +171,13 @@ class _HomeScreenState extends State<HomeScreen> {
                       badge: openReceipts > 0 ? '$openReceipts سند مستني' : null,
                       onTap: () => _open(const ReceiveListScreen()),
                     ),
-                  ],
+                  if (!e.can('sale') && !e.can('price') && !e.can('count') && !e.can('receive') && !e.can('new_receipt'))
+                    const CardBox(
+                      child: Text(
+                        'دورك مالوش صلاحيات على الجهاز. اطلب من المدير يضيفها من لوحة التحكم ← الأدوار والصلاحيات.',
+                        style: T.label,
+                      ),
+                    ),
                   const SizedBox(height: S.xs),
                   const Text('السجل (على الجهاز ده)', style: T.label),
                   const SizedBox(height: S.xs),
@@ -176,9 +185,10 @@ class _HomeScreenState extends State<HomeScreen> {
                     spacing: S.s,
                     runSpacing: S.s,
                     children: [
-                      if (e.canSell) _historyButton(Icons.receipt_long_outlined, 'الفواتير', 'sales'),
-                      if (e.canStock) _historyButton(Icons.local_shipping_outlined, 'السندات المستلمة', 'receipts'),
-                      if (e.canStock) _historyButton(Icons.fact_check_outlined, 'الجرد', 'counts'),
+                      if (e.can('sale')) _historyButton(Icons.receipt_long_outlined, 'الفواتير', 'sales'),
+                      if (e.can('receive') || e.can('new_receipt'))
+                        _historyButton(Icons.local_shipping_outlined, 'السندات المستلمة', 'receipts'),
+                      if (e.can('count')) _historyButton(Icons.fact_check_outlined, 'الجرد', 'counts'),
                     ],
                   ),
                 ],
@@ -200,8 +210,6 @@ class _HomeScreenState extends State<HomeScreen> {
     label: Text(label, style: T.label),
   );
 }
-
-String roleName(String role) => const {'cashier': 'كاشير', 'storekeeper': 'أمين مخزن', 'supervisor': 'مشرف', 'admin': 'مدير'}[role] ?? role;
 
 class _MenuItem extends StatelessWidget {
   final String title, sub;

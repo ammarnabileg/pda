@@ -19,6 +19,7 @@
     <symbol id="i-supplier" viewBox="0 0 24 24"><path d="M4 21V9l8-6 8 6v12M9 21v-7h6v7" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/></symbol>
     <symbol id="i-chart" viewBox="0 0 24 24"><path d="M4 20V10M10 20V4M16 20v-7M22 20H2" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></symbol>
     <symbol id="i-device" viewBox="0 0 24 24"><path d="M7 2h10v20H7zM11 18h2" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/></symbol>
+    <symbol id="i-key" viewBox="0 0 24 24"><path d="M14.5 9.5a4.5 4.5 0 1 0-1.3 3.2L21 20.5M17 16.5l2 2M15 14.5l2 2" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></symbol>
     <symbol id="i-save" viewBox="0 0 24 24"><path d="M5 3h11l3 3v15H5zM8 3v6h7V3M8 21v-7h8v7" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/></symbol>
     <symbol id="i-warn" viewBox="0 0 24 24"><path d="M12 3 2 21h20zM12 10v5M12 18h.01" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/></symbol>
     <symbol id="i-ok" viewBox="0 0 24 24"><path d="M20 6 9 17l-5-5" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></symbol>
@@ -33,22 +34,25 @@
       <button class="menu-btn" type="button" aria-expanded="false" aria-controls="side-links" onclick="const o=document.body.classList.toggle('menu-open');this.setAttribute('aria-expanded',o)">{{ icon('menu') }} القائمة</button>
     </div>
     <div id="side-links">
-    {% set groups = [
-      ("التشغيل", [("/", "الرئيسية", "home"), ("/sales", "المبيعات", "cart"), ("/receipts", "الاستلام", "truck"), ("/counts", "الجرد", "check")]),
-      ("البيانات", [("/products", "الأصناف", "box"), ("/suppliers", "الموردين", "supplier")]),
-      ("التقارير", [("/reports", "تقارير المبيعات", "chart")]),
+    {% set all_groups = [
+      ("التشغيل", [("/", "الرئيسية", "home", ""), ("/sales", "المبيعات", "cart", "sales"), ("/receipts", "الاستلام", "truck", "receipts"), ("/counts", "الجرد", "check", "counts")]),
+      ("البيانات", [("/products", "الأصناف", "box", "products"), ("/suppliers", "الموردين", "supplier", "products")]),
+      ("التقارير", [("/reports", "تقارير المبيعات", "chart", "sales")]),
+      ("الإدارة", [("/employees", "الموظفين", "users", "employees"), ("/roles", "الأدوار والصلاحيات", "key", "employees"), ("/devices", "الأجهزة", "device", "devices"), ("/backup", "النسخ الاحتياطي", "save", "backup")]),
     ] %}
-    {% if user.role == "admin" %}{% set groups = groups + [("الإدارة", [("/employees", "الموظفين", "users"), ("/devices", "الأجهزة", "device"), ("/backup", "النسخ الاحتياطي", "save")])] %}{% endif %}
-    {% for gname, links in groups %}
+    {% for gname, all_links in all_groups %}
+      {% set links = [] %}{% for href, label, ic, perm in all_links %}{% if not perm or user.can(perm) %}{% set _ = links.append((href, label, ic)) %}{% endif %}{% endfor %}
+      {% if links %}
       <div class="group">{{ gname }}</div>
       {% for href, label, ic in links %}
         {% set on = (href == '/' and path == '/') or (href != '/' and path.startswith(href)) %}
-        <a href="{{ href }}" class="{{ 'on' if on }}" {{ 'aria-current="page"' if on }}>{{ icon(ic) }}<span>{{ label }}</span></a>
+        <a href="{{ href }}" class="{{ 'on' if on }}" {% if on %}aria-current="page"{% endif %}>{{ icon(ic) }}<span>{{ label }}</span></a>
       {% endfor %}
+      {% endif %}
     {% endfor %}
     <div class="who">
       <div class="who-name">{{ user.name }}</div>
-      <div class="who-role">{{ ROLES[user.role] }}</div>
+      <div class="who-role">{{ user.role_name }}</div>
       <form method="post" action="/logout"><button>تسجيل الخروج</button></form>
     </div>
     </div>

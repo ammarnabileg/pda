@@ -110,7 +110,7 @@ class _LoginScreenState extends State<LoginScreen> {
                                 ),
                                 const SizedBox(width: 14),
                                 Expanded(child: Text(e.name, style: T.heading)),
-                                Text(Employee.roleNames[e.role] ?? '', style: const TextStyle(fontSize: 17, color: cMuted)),
+                                Text(e.roleName, style: const TextStyle(fontSize: 17, color: cMuted)),
                               ],
                             ),
                           ),

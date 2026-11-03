@@ -72,6 +72,16 @@ Future<LocalDb> seededDb() async {
     'employees': [
       {'id': 1, 'name': 'أحمد', 'role': 'cashier', 'pin_salt': salt, 'pin_hash': hashPin('2222', salt), 'active': true},
       {'id': 2, 'name': 'محمود', 'role': 'storekeeper', 'pin_salt': salt, 'pin_hash': hashPin('3333', salt), 'active': true},
+      {
+        'id': 3,
+        'name': 'سعاد',
+        'role': 'r1a2b3c4',
+        'role_name': 'مراجعة جرد',
+        'permissions': ['count', 'price'],
+        'pin_salt': salt,
+        'pin_hash': hashPin('4444', salt),
+        'active': true,
+      },
     ],
     'suppliers': [
       {'id': 4, 'name': 'شركة المواد الغذائية'},
@@ -625,5 +635,32 @@ void main() {
     expect(find.textContaining('المعتمد 3 كرتون'), findsOneWidget, reason: 'supervisor changed 2 to 3 cartons');
     expect(await tester.runAsync(() => app.db.unseenDecisions()), 0);
     await tester.pump(const Duration(seconds: 30));
+  });
+
+  testWidgets('a role made in the dashboard: only its screens show, and no purchase price', (tester) async {
+    await startApp(tester);
+    await login(tester, 'سعاد', '4444');
+    expect(find.textContaining('مراجعة جرد'), findsOneWidget);
+    expect(find.text('جرد'), findsOneWidget);
+    expect(find.text('سعر صنف'), findsOneWidget);
+    expect(find.text('بيع'), findsNothing);
+    expect(find.text('استلام'), findsNothing);
+    expect(find.text('الفواتير'), findsNothing);
+    await tester.tap(find.text('سعر صنف'));
+    await settle(tester);
+    await scan(tester, '6281000123456');
+    await settle(tester);
+    expect(find.textContaining('2.450'), findsWidgets);
+    expect(find.text('سعر الشراء'), findsNothing);
+  });
+
+  testWidgets('the cashier (old fixed role) still sees the purchase price', (tester) async {
+    await startApp(tester);
+    await login(tester, 'أحمد', '2222');
+    await tester.tap(find.text('سعر صنف'));
+    await settle(tester);
+    await scan(tester, '6281000123456');
+    await settle(tester);
+    expect(find.text('سعر الشراء'), findsOneWidget);
   });
 }

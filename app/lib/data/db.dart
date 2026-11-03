@@ -17,7 +17,7 @@ class LocalDb {
     final file = path ?? p.join(await f.getDatabasesPath(), 'tamween.db');
     final db = await f.openDatabase(
       file,
-      options: OpenDatabaseOptions(version: 5, onCreate: _create, onUpgrade: _upgrade),
+      options: OpenDatabaseOptions(version: 6, onCreate: _create, onUpgrade: _upgrade),
     );
     return LocalDb(db);
   }
@@ -30,12 +30,27 @@ class LocalDb {
     }
     if (from < 4) await _createHistory(db);
     if (from < 5) await _createSuppliers(db);
+    if (from < 6) {
+      final cols = (await db.rawQuery('PRAGMA table_info(employees)')).map((c) => c['name']).toSet();
+      if (cols.isEmpty) {
+        await _createEmployees(db);
+      } else {
+        if (!cols.contains('role_name')) await db.execute('ALTER TABLE employees ADD COLUMN role_name TEXT');
+        if (!cols.contains('permissions')) await db.execute('ALTER TABLE employees ADD COLUMN permissions TEXT');
+      }
+      // Permissions only arrive with a full download; until then the old fixed roles apply.
+      await db.insert('kv', {'key': 'version', 'value': '0'}, conflictAlgorithm: ConflictAlgorithm.replace);
+    }
     if (from < 3) {
       await _createBarcodes(db);
       // Extra barcodes only arrive with a full download.
       await db.insert('kv', {'key': 'version', 'value': '0'}, conflictAlgorithm: ConflictAlgorithm.replace);
     }
   }
+
+  static Future<void> _createEmployees(Database db) =>
+      db.execute('''CREATE TABLE IF NOT EXISTS employees(id INTEGER PRIMARY KEY, name TEXT NOT NULL, role TEXT NOT NULL,
+      role_name TEXT, permissions TEXT, pin_salt TEXT NOT NULL, pin_hash TEXT NOT NULL, active INTEGER NOT NULL)''');
 
   static Future<void> _createSuppliers(Database db) =>
       db.execute('CREATE TABLE IF NOT EXISTS suppliers(id INTEGER PRIMARY KEY, name TEXT NOT NULL)');
@@ -61,8 +76,7 @@ class LocalDb {
     await _createBarcodes(db);
     await _createHistory(db);
     await _createSuppliers(db);
-    await db.execute('''CREATE TABLE employees(id INTEGER PRIMARY KEY, name TEXT NOT NULL, role TEXT NOT NULL,
-      pin_salt TEXT NOT NULL, pin_hash TEXT NOT NULL, active INTEGER NOT NULL)''');
+    await _createEmployees(db);
     await db.execute('''CREATE TABLE receipts(id INTEGER PRIMARY KEY, supplier TEXT NOT NULL, status TEXT NOT NULL,
       note TEXT NOT NULL, created_at TEXT NOT NULL, lines TEXT NOT NULL)''');
     // Records waiting to be uploaded. state: pending | rejected

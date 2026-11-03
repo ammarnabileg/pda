@@ -9,7 +9,7 @@ from fastapi.testclient import TestClient  # noqa: E402
 from sqlalchemy import text  # noqa: E402
 
 from app import services  # noqa: E402
-from app.db import Base, SessionLocal, engine, init_db  # noqa: E402
+from app.db import Base, SessionLocal, engine, init_db, seed_roles  # noqa: E402
 from app.main import app  # noqa: E402
 from app.models import Device, Employee, Product, Receipt, ReceiptLine, Supplier  # noqa: E402
 from app.security import hash_password, hash_pin, hash_token  # noqa: E402
@@ -28,6 +28,7 @@ def clean():
     with engine.begin() as c:
         names = ", ".join(t.name for t in Base.metadata.sorted_tables)
         c.execute(text(f"TRUNCATE {names} RESTART IDENTITY CASCADE"))
+    seed_roles()
 
 
 @pytest.fixture

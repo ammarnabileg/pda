@@ -34,6 +34,20 @@ def init_db():
     with engine.begin() as conn:
         for sql in UPGRADES:
             conn.execute(text(sql))
+    seed_roles()
+
+
+def seed_roles():
+    """The four starting roles, once. Afterwards roles are managed in the dashboard."""
+    from .models import ADMIN_ROLE, DEFAULT_ROLES, Role
+
+    with SessionLocal() as db:
+        if db.get(Role, ADMIN_ROLE) is None and not db.query(Role).count():
+            for key, name, perms in DEFAULT_ROLES:
+                db.add(Role(key=key, name=name, permissions=",".join(sorted(perms))))
+        elif db.get(Role, ADMIN_ROLE) is None:
+            db.add(Role(key=ADMIN_ROLE, name="مدير", permissions=""))
+        db.commit()
 
 
 UPGRADES = [

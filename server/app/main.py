@@ -20,7 +20,7 @@ def create_app() -> FastAPI:
 
     @app.exception_handler(dashboard.Forbidden)
     def _forbidden(request: Request, exc):
-        return HTMLResponse("<p dir=rtl style='font:20px sans-serif;padding:30px'>الصفحة دي للمدير فقط. <a href='/'>الرجوع</a></p>", status_code=403)
+        return HTMLResponse("<p dir=rtl style='font:20px sans-serif;padding:30px'>معندكش صلاحية للصفحة دي. اطلبها من المدير (الأدوار والصلاحيات). <a href='/'>الرجوع</a></p>", status_code=403)
 
     return app
 

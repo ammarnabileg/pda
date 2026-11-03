@@ -43,4 +43,35 @@ void main() {
   test('uuid4 format', () {
     expect(RegExp(r'^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$').hasMatch(uuid4()), isTrue);
   });
+
+  test('employee permissions come from the server; old data falls back to the fixed roles', () {
+    final custom = Employee.fromApi({
+      'id': 3,
+      'name': 'سعاد',
+      'role': 'r1a2b3c4',
+      'role_name': 'مراجعة جرد',
+      'permissions': ['count', 'price'],
+      'pin_salt': 's',
+      'pin_hash': 'h',
+      'active': true,
+    });
+    expect(custom.can('count'), isTrue);
+    expect(custom.can('sale'), isFalse);
+    expect(custom.can('see_cost'), isFalse);
+    expect(custom.roleName, 'مراجعة جرد');
+    final back = Employee.fromRow(custom.toRow());
+    expect(back.permissions, {'count', 'price'});
+    expect(back.roleName, 'مراجعة جرد');
+
+    final none = Employee.fromRow(
+      Employee.fromApi({'id': 4, 'name': 'x', 'role': 'r9', 'permissions': <String>[], 'pin_salt': 's', 'pin_hash': 'h', 'active': true})
+          .toRow(),
+    );
+    expect(none.permissions, isEmpty, reason: 'a role with nothing ticked stays empty, not the defaults');
+    expect(none.can('price'), isFalse);
+
+    final old = Employee.fromApi({'id': 5, 'name': 'y', 'role': 'storekeeper', 'pin_salt': 's', 'pin_hash': 'h', 'active': true});
+    expect(old.can('count'), isTrue);
+    expect(old.can('sale'), isFalse);
+  });
 }
