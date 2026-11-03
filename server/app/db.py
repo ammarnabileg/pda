@@ -47,6 +47,7 @@ def seed_roles(add_accountant=False):
     from .models import ADMIN_ROLE, DEFAULT_ROLES, Role
 
     with SessionLocal() as db:
+        db.execute(text("SELECT set_config('tamween.actor', 'system', true)"))
         if db.get(Role, ADMIN_ROLE) is None and not db.query(Role).count():
             for key, name, perms in DEFAULT_ROLES:
                 db.add(Role(key=key, name=name, permissions=",".join(sorted(perms))))
@@ -67,6 +68,7 @@ UPGRADES = [
     "CREATE UNIQUE INDEX IF NOT EXISTS receipts_client_id ON receipts (client_id)",
     "ALTER TABLE receipts ADD COLUMN IF NOT EXISTS approved_by INTEGER REFERENCES employees(id)",
     "ALTER TABLE receipts ADD COLUMN IF NOT EXISTS approved_at TIMESTAMPTZ",
+    "ALTER TABLE IF EXISTS audit_log ALTER COLUMN action TYPE VARCHAR(20)",
 ]
 
 
@@ -74,7 +76,19 @@ UPGRADES = [
 # Enforced inside PostgreSQL so a bug, a new page or a manual DELETE cannot remove them.
 # Only lines of a voucher that is still "open" (not received yet) may be replaced while editing it.
 PROTECTED_TABLES = ["sales", "sale_lines", "receipts", "count_sessions", "count_lines", "stock_moves"]
-AUDITED_TABLES = ["sales", "sale_lines", "receipts", "receipt_lines", "count_sessions", "count_lines"]
+# Every table with business data, and what is logged. Lines are logged when changed or removed; a new line
+# is part of its parent's creation. stock_moves is itself a permanent log, so it is not copied.
+AUDITED_TABLES = {
+    "sales": "INSERT OR UPDATE OR DELETE", "sale_lines": "UPDATE OR DELETE",
+    "receipts": "INSERT OR UPDATE OR DELETE", "receipt_lines": "UPDATE OR DELETE",
+    "count_sessions": "INSERT OR UPDATE OR DELETE", "count_lines": "UPDATE OR DELETE",
+    "products": "INSERT OR UPDATE OR DELETE", "product_barcodes": "INSERT OR UPDATE OR DELETE",
+    "suppliers": "INSERT OR UPDATE OR DELETE", "employees": "INSERT OR UPDATE OR DELETE",
+    "roles": "INSERT OR UPDATE OR DELETE", "devices": "INSERT OR UPDATE OR DELETE",
+}
+# Columns that change all the time on their own (stock has its own log in stock_moves; last_seen is the heartbeat).
+AUDIT_NOISE = ["version", "stock", "last_seen", "updated_at"]
+AUDIT_SECRET = ["pin_salt", "pin_hash", "password_hash", "token_hash", "pairing_code"]
 KEEP_FOREVER = [
     """CREATE OR REPLACE FUNCTION tamween_no_delete() RETURNS trigger LANGUAGE plpgsql AS $$
     BEGIN
@@ -91,28 +105,32 @@ KEEP_FOREVER = [
     BEGIN
       RAISE EXCEPTION 'tamween: rows in % are never changed or deleted', TG_TABLE_NAME USING ERRCODE = 'restrict_violation';
     END $$""",
-    # Who changed what: one row per changed record, only the columns that changed, as [old, new].
-    """CREATE OR REPLACE FUNCTION tamween_audit() RETURNS trigger LANGUAGE plpgsql AS $$
-    DECLARE o jsonb := to_jsonb(OLD); n jsonb; ch jsonb;
+    # Who changed what: one row per added, changed or removed record, with each column as [old, new].
+    # Secrets are never copied into the log, only the fact that they changed.
+    f"""CREATE OR REPLACE FUNCTION tamween_audit() RETURNS trigger LANGUAGE plpgsql AS $$
+    DECLARE o jsonb; n jsonb; ch jsonb;
+      noise text[] := ARRAY{AUDIT_NOISE!r}::text[];
+      secret text[] := ARRAY{AUDIT_SECRET!r}::text[];
     BEGIN
-      IF TG_OP = 'DELETE' THEN
-        SELECT jsonb_object_agg(key, jsonb_build_array(value, NULL)) INTO ch FROM jsonb_each(o);
-      ELSE
-        n := to_jsonb(NEW);
-        SELECT jsonb_object_agg(key, jsonb_build_array(o -> key, value)) INTO ch
-          FROM jsonb_each(n) WHERE key <> 'version' AND (o -> key) IS DISTINCT FROM value;
-        IF ch IS NULL THEN RETURN NULL; END IF;
-      END IF;
+      IF TG_OP <> 'INSERT' THEN o := to_jsonb(OLD); END IF;
+      IF TG_OP <> 'DELETE' THEN n := to_jsonb(NEW); END IF;
+      SELECT jsonb_object_agg(key, CASE WHEN key = ANY(secret)
+               THEN jsonb_build_array(CASE WHEN o ? key AND o -> key <> 'null' THEN '***' END,
+                                      CASE WHEN n ? key AND n -> key <> 'null' THEN '***' END)
+               ELSE jsonb_build_array(o -> key, n -> key) END) INTO ch
+        FROM jsonb_object_keys(COALESCE(n, o)) AS key
+       WHERE NOT key = ANY(noise) AND (o -> key) IS DISTINCT FROM (n -> key)
+         AND NOT (TG_OP = 'INSERT' AND n -> key = 'null');
+      IF ch IS NULL THEN RETURN NULL; END IF;
       INSERT INTO audit_log (at, actor, reason, table_name, row_id, action, changes)
       VALUES (clock_timestamp(), NULLIF(current_setting('tamween.actor', true), ''),
               NULLIF(current_setting('tamween.reason', true), ''), TG_TABLE_NAME,
-              COALESCE(n, o) ->> 'id', TG_OP, ch);
+              COALESCE(COALESCE(n, o) ->> 'id', COALESCE(n, o) ->> 'key'), TG_OP, ch);
       RETURN NULL;
     END $$""",
-    *[f"CREATE OR REPLACE TRIGGER {t}_audit AFTER UPDATE ON {t} FOR EACH ROW EXECUTE FUNCTION tamween_audit()"
-      for t in AUDITED_TABLES if t != "receipt_lines"],
-    "CREATE OR REPLACE TRIGGER receipt_lines_audit AFTER UPDATE OR DELETE ON receipt_lines FOR EACH ROW "
-    "EXECUTE FUNCTION tamween_audit()",
+    # Line tables and their parents: changes and removals; a new line is part of its parent's creation.
+    *[f"CREATE OR REPLACE TRIGGER {t}_audit AFTER {ops} ON {t} FOR EACH ROW EXECUTE FUNCTION tamween_audit()"
+      for t, ops in AUDITED_TABLES.items()],
     "CREATE OR REPLACE TRIGGER audit_log_read_only BEFORE UPDATE OR DELETE ON audit_log FOR EACH ROW "
     "EXECUTE FUNCTION tamween_read_only()",
     "CREATE OR REPLACE TRIGGER audit_log_no_truncate BEFORE TRUNCATE ON audit_log FOR EACH STATEMENT "

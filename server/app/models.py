@@ -30,7 +30,8 @@ PERMISSIONS = {
     "receipts": ("سندات الاستلام والموافقة عليها", "لوحة التحكم"),
     "sales": ("المبيعات والتقارير والأرباح", "لوحة التحكم"),
     "counts": ("مراجعة الجرد واعتماده", "لوحة التحكم"),
-    "accounting": ("المحاسبة: تعديل الفواتير والسندات والجرد بعد ما تتقفل، وسجل التعديلات", "لوحة التحكم"),
+    "accounting": ("المحاسبة: تعديل الفواتير والسندات والجرد بعد ما تتقفل، وسجلهم", "لوحة التحكم"),
+    "audit": ("السجل الكامل: كل التغييرات والدخول على اللوحة", "لوحة التحكم"),
     "employees": ("الموظفين والأدوار والصلاحيات", "لوحة التحكم"),
     "devices": ("الأجهزة وربطها", "لوحة التحكم"),
     "backup": ("النسخ الاحتياطي", "لوحة التحكم"),
@@ -41,7 +42,7 @@ ALL_PERMISSIONS = frozenset(PERMISSIONS)
 DEFAULT_ROLES = [
     ("cashier", "كاشير", {"sale", "price", "see_cost"}),
     ("storekeeper", "أمين مخزن", {"price", "see_cost", "count", "receive", "new_receipt"}),
-    ("supervisor", "مشرف", ALL_PERMISSIONS - {"employees", "devices", "backup", "accounting"}),
+    ("supervisor", "مشرف", ALL_PERMISSIONS - {"employees", "devices", "backup", "accounting", "audit"}),
     ("accountant", "محاسب", {"dashboard", "sales", "receipts", "counts", "accounting"}),
     ("admin", "مدير", ALL_PERMISSIONS),
 ]
@@ -309,5 +310,5 @@ class AuditLog(Base):
     reason: Mapped[str | None] = mapped_column(Text)
     table_name: Mapped[str] = mapped_column(String(40))
     row_id: Mapped[str] = mapped_column(String(64))
-    action: Mapped[str] = mapped_column(String(10))
+    action: Mapped[str] = mapped_column(String(20))
     changes: Mapped[dict] = mapped_column(JSONB)

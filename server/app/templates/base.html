@@ -37,11 +37,11 @@
     {% set all_groups = [
       ("التشغيل", [("/", "الرئيسية", "home", ""), ("/sales", "المبيعات", "cart", "sales"), ("/receipts", "الاستلام", "truck", "receipts"), ("/counts", "الجرد", "check", "counts")]),
       ("البيانات", [("/products", "الأصناف", "box", "products"), ("/suppliers", "الموردين", "supplier", "products")]),
-      ("التقارير", [("/reports", "تقارير المبيعات", "chart", "sales"), ("/accounting/log", "سجل التعديلات", "key", "accounting")]),
+      ("التقارير", [("/reports", "تقارير المبيعات", "chart", "sales"), ("/log", "السجل", "key", "")]),
       ("الإدارة", [("/employees", "الموظفين", "users", "employees"), ("/roles", "الأدوار والصلاحيات", "key", "employees"), ("/devices", "الأجهزة", "device", "devices"), ("/backup", "النسخ الاحتياطي", "save", "backup")]),
     ] %}
     {% for gname, all_links in all_groups %}
-      {% set links = [] %}{% for href, label, ic, perm in all_links %}{% if not perm or user.can(perm) %}{% set _ = links.append((href, label, ic)) %}{% endif %}{% endfor %}
+      {% set links = [] %}{% for href, label, ic, perm in all_links %}{% if (href == '/log' and (user.can('audit') or user.can('accounting'))) or (href != '/log' and (not perm or user.can(perm))) %}{% set _ = links.append((href, label, ic)) %}{% endif %}{% endfor %}
       {% if links %}
       <div class="group">{{ gname }}</div>
       {% for href, label, ic in links %}

@@ -38,7 +38,7 @@ def test_only_accounting_can_edit(db, seed, device_client):
     assert "تعديل (المحاسبة)" not in sup.get(f"/sales/{sid}").text
     assert sup.get(f"/accounting/sales/{sid}").status_code == 403
     assert sup.post(f"/accounting/sales/{sid}", data={"reason": "x"}).status_code == 403
-    assert sup.get("/accounting/log").status_code == 403
+    assert sup.get("/log").status_code == 403
     acc, _ = login_as(db, "accountant", "acc")
     assert "تعديل (المحاسبة)" in acc.get(f"/sales/{sid}").text
     assert acc.get(f"/accounting/sales/{sid}").status_code == 200
@@ -69,7 +69,7 @@ def test_sale_edit_moves_stock_and_is_logged(db, seed, device_client):
     assert line_log.changes["qty"] == [2, 1]
     page = acc.get(f"/sales/{sid}").text
     assert "فاتورة ورقية" in page and "acc" in page
-    log = acc.get("/accounting/log?manual=1").text
+    log = acc.get("/log?manual=1").text
     assert "فاتورة ورقية" in log and f"/sales/{sid}" in log
 
 
@@ -80,7 +80,7 @@ def test_receipt_and_count_corrections(db, seed, device_client):
     db.expire_all()
     assert db.get(Product, seed["rice"].id).stock == Decimal("102")
     # The device's receiving was logged too, under the device.
-    assert db.query(AuditLog).filter_by(table_name="receipts", row_id=str(rid)).first().actor == f"dev:{seed['device'].id}"
+    assert db.query(AuditLog).filter_by(table_name="receipts", row_id=str(rid), action="UPDATE").first().actor == f"dev:{seed['device'].id}"
     acc, _ = login_as(db, "accountant", "acc")
     lid = db.get(Receipt, rid).lines[0].id
     r = acc.post(f"/accounting/receipts/{rid}", data={f"q_{lid}": "10", "reason": "كرتون اتلقى بعدين"}, follow_redirects=False)
@@ -122,9 +122,9 @@ def test_change_outside_the_app_is_logged_without_a_name(db, seed, device_client
     sid = push_sale(device_client, seed)
     db.execute(text("UPDATE sales SET total = 1 WHERE id = :id"), {"id": sid})
     db.commit()
-    log = db.query(AuditLog).filter_by(table_name="sales", row_id=sid).one()
+    log = db.query(AuditLog).filter_by(table_name="sales", row_id=sid, action="UPDATE").one()
     assert log.actor is None
-    assert "من خارج البرنامج" in admin_client.get(f"/sales/{sid}").text
+    assert "من خارج اللوحة والأجهزة" in admin_client.get(f"/sales/{sid}").text
 
 
 def test_existing_database_gets_the_accountant_role_once(db):

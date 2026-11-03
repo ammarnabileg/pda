@@ -1,20 +1,20 @@
-{% extends "base.html" %}{% block title %}سجل التعديلات{% endblock %}
+{% extends "base.html" %}{% block title %}السجل{% endblock %}
 {% block content %}
-<div class="bar"><h1>سجل التعديلات</h1></div>
-<p class="muted">كل تغيير حصل في فاتورة أو سند أو جرد: مين، وإمتى، والقيمة قبل وبعد. السجل بيتكتب من قاعدة البيانات نفسها، ومايتعدلش ولا يتمسح.</p>
+<div class="bar"><h1>السجل</h1></div>
+<p class="muted">كل إضافة أو تعديل أو مسح في البيانات، والدخول على اللوحة: مين، وإمتى، والقيمة قبل وبعد. السجل بيتكتب من قاعدة البيانات نفسها، ومايتعدلش ولا يتمسح. الأرقام السرية وكلمات السر مابتتسجلش، بيتسجل بس إنها اتغيّرت. حركة الرصيد مع كل بيع موجودة في صفحة كل صنف.</p>
 <form class="card bar" method="get">
   <div><label for="d_from">من</label><input type="date" id="d_from" name="d_from" value="{{ d_from }}"></div>
   <div><label for="d_to">إلى</label><input type="date" id="d_to" name="d_to" value="{{ d_to }}"></div>
   <div><label for="what">النوع</label><select id="what" name="what"><option value="">الكل</option>
-    {% for k, l in [("sales", "الفواتير"), ("receipts", "السندات"), ("counts", "الجرد")] %}<option value="{{ k }}" {{ 'selected' if what == k }}>{{ l }}</option>{% endfor %}</select></div>
+    {% for k, l in groups %}<option value="{{ k }}" {{ 'selected' if what == k }}>{{ l }}</option>{% endfor %}</select></div>
   <label class="check" style="align-self:end"><input type="checkbox" name="manual" value="1" {{ 'checked' if manual }}> تعديلات المحاسبة بس</label>
   <button class="btn" style="align-self:end">عرض</button>
 </form>
 <p class="muted">{{ total }} تغيير</p>
 <div class="table-wrap"><table><thead><tr><th>الوقت</th><th>مين</th><th>إيه</th><th>اتغيّر</th><th>السبب</th></tr></thead>
 {% for h in rows %}<tr><td>{{ h.e.at|dt }}</td><td>{{ h.who }}</td>
-<td>{% if links[h.e.id] %}<a href="{{ links[h.e.id] }}">{{ h.what }}</a>{% else %}{{ h.what }}{% endif %}{% if h.e.action == 'DELETE' %} <span class="pill p-red">اتشال</span>{% endif %}</td>
-<td>{% for label, old, new in h.changes %}<div><b>{{ label }}:</b> <span dir="ltr">{{ old }}</span> ← <span dir="ltr">{{ new }}</span></div>{% endfor %}</td>
+<td>{% if links[h.e.id] %}<a href="{{ links[h.e.id] }}">{{ h.what }}</a>{% else %}{{ h.what }}{% endif %}{% if h.action %} <span class="pill {{ h.action[1] }}">{{ h.action[0] }}</span>{% endif %}</td>
+<td>{% for label, old, new in h.changes %}<div><b>{{ label }}:</b> {% if h.is_event or h.e.action == 'INSERT' %}<span dir="auto">{{ new }}</span>{% elif h.e.action == 'DELETE' %}<span dir="auto">{{ old }}</span>{% else %}<span dir="auto">{{ old }}</span> ← <span dir="auto">{{ new }}</span>{% endif %}</div>{% endfor %}</td>
 <td>{{ h.e.reason or '' }}</td></tr>
 {% else %}<tr><td colspan="5" class="muted">مفيش تغييرات في الفترة دي</td></tr>{% endfor %}
 </table></div>

@@ -21,4 +21,5 @@
   <button class="btn">حفظ</button>
 </form>
 <script>const r=document.getElementById('role'),d=document.getElementById('dash');function s(){d.style.display=r.selectedOptions[0]&&r.selectedOptions[0].dataset.dash==='1'?'':'none'}r.addEventListener('change',s);s()</script>
+{% if history is defined %}<div class="no-print">{% include "_audit.html" %}</div>{% endif %}
 {% endblock %}

@@ -77,6 +77,10 @@ def redirect(url: str):
     return RedirectResponse(url, status_code=303)
 
 
+def client_ip(request: Request) -> str:
+    return request.client.host if request.client else ""
+
+
 class LoginRequired(Exception):
     pass
 
@@ -148,14 +152,22 @@ async def login(request: Request, db: Session = Depends(get_db)):
     form = await request.form()
     user = db.scalar(select(Employee).where(Employee.username == str(form.get("username", "")).strip()))
     if not user or not user.active or not user.can_dashboard or not verify_password(str(form.get("password", "")), user.password_hash):
+        services.log_event(db, "login_failed", f"emp:{user.id}" if user else None,
+                           username=str(form.get("username", ""))[:60], ip=client_ip(request))
+        db.commit()
         return render(request, "login.html", {"error": "اسم المستخدم أو كلمة السر غلط", "username": form.get("username", "")}, 400)
     request.session.clear()
     request.session["uid"] = user.id
+    services.log_event(db, "login", f"emp:{user.id}", ip=client_ip(request))
+    db.commit()
     return redirect("/")
 
 
 @router.post("/logout")
-def logout(request: Request):
+def logout(request: Request, db: Session = Depends(get_db)):
+    if request.session.get("uid"):
+        services.log_event(db, "logout", f"emp:{request.session['uid']}", ip=client_ip(request))
+        db.commit()
     request.session.clear()
     return redirect("/login")
 
@@ -178,6 +190,7 @@ async def setup(request: Request, db: Session = Depends(get_db)):
     if errors:
         return render(request, "setup.html", {"errors": errors, "form": f}, 400)
     salt, h = hash_pin(pin)
+    services.set_actor(db, "setup")
     emp = Employee(name=name, role=ADMIN_ROLE, pin_salt=salt, pin_hash=h, username=username,
                    password_hash=hash_password(password))
     services.bump(db, emp)
@@ -322,12 +335,12 @@ def apply_product_form(db, p: Product, f, extra):
         p.extra_barcodes.append(ProductBarcode(code=code, mode=mode))
 
 
-def form_ctx(p, form, errors=None, moves=None):
+def form_ctx(p, form, errors=None, moves=None, **extra):
     if form is not None:
         barcodes = form_barcodes(form) if hasattr(form, "getlist") else []
     else:
         barcodes = [(b.code, b.mode) for b in p.extra_barcodes] if p else []
-    return {"p": p, "form": form, "errors": errors or {}, "moves": moves or [], "barcodes": barcodes}
+    return {"p": p, "form": form, "errors": errors or {}, "moves": moves or [], "barcodes": barcodes, **extra}
 
 
 @router.get("/products/new", response_class=HTMLResponse)
@@ -362,7 +375,8 @@ def product_detail(pid: int, request: Request, user=Depends(need["products"]), d
     if not p:
         return redirect("/products")
     moves = db.scalars(select(StockMove).where(StockMove.product_id == pid).order_by(StockMove.created_at.desc()).limit(50)).all()
-    return render(request, "product_form.html", form_ctx(p, None, moves=moves))
+    return render(request, "product_form.html", form_ctx(p, None, moves=moves,
+                  **history(db, "products", p.id, "product_barcodes", [b.id for b in p.extra_barcodes])))
 
 
 @router.post("/products/{pid}")
@@ -764,9 +778,30 @@ FIELD_NAMES = {
     "received_at": "وقت الاستلام", "received_by": "استلمه", "approved_by": "وافق عليه", "approved_at": "وقت الموافقة",
     "reviewed_by": "راجعه", "reviewed_at": "وقت المراجعة", "supplier_id": "المورد", "device_notes": "ملاحظات الجهاز",
     "product_id": "الصنف", "extra": "زائد", "stock_at_sync": "الرصيد وقت الوصول",
+    "name": "الاسم", "barcode": "الباركود", "price": "سعر البيع", "cost": "سعر الشراء", "carton": "حبات الكرتون",
+    "unit": "نوع البيع", "min_stock": "حد الطلب", "active": "فعّال", "role": "الدور", "username": "اسم المستخدم",
+    "pin_hash": "الرقم السري", "pin_salt": "الرقم السري (ملح)", "password_hash": "كلمة سر اللوحة",
+    "token_hash": "ربط الجهاز", "pairing_code": "كود الربط", "pairing_expires": "صلاحية كود الربط",
+    "paired_at": "وقت الربط", "app_version": "نسخة التطبيق", "permissions": "الصلاحيات", "code": "الباركود",
+    "key": "المفتاح", "employee_id": "الموظف", "device_id": "الجهاز", "created_at": "اتعمل", "synced_at": "وصل للسيرفر",
+    "finished_at": "خلص على الجهاز", "started_at": "بدأ", "client_id": "رقم الجهاز", "receipt_id": "السند",
+    "ip": "عنوان الكمبيوتر", "unit_cost": "التكلفة",
 }
+HIDDEN_ON_CREATE = {"id", "pin_salt", "version"}
 TABLE_NAMES = {"sales": "فاتورة", "sale_lines": "سطر فاتورة", "receipts": "سند", "receipt_lines": "سطر سند",
-               "count_sessions": "جرد", "count_lines": "سطر جرد"}
+               "count_sessions": "جرد", "count_lines": "سطر جرد", "products": "صنف", "product_barcodes": "باركود إضافي",
+               "suppliers": "مورد", "employees": "موظف", "roles": "دور", "devices": "جهاز"}
+EVENT_NAMES = {"login": "دخول اللوحة", "login_failed": "محاولة دخول فاشلة", "logout": "خروج من اللوحة",
+               "backup_download": "تنزيل نسخة احتياطية"}
+ACTION_NAMES = {"INSERT": ("اتضاف", "p-ok"), "DELETE": ("اتشال", "p-red")}
+ACTOR_NAMES = {"system": "النظام", "setup": "الإعداد الأول"}
+# Log filters: which tables each one shows. "accounting" users see only the first three.
+LOG_GROUPS = {"sales": ("الفواتير", ("sales", "sale_lines")), "receipts": ("السندات", ("receipts", "receipt_lines")),
+              "counts": ("الجرد", ("count_sessions", "count_lines")),
+              "products": ("الأصناف والموردين", ("products", "product_barcodes", "suppliers")),
+              "people": ("الموظفين والأدوار", ("employees", "roles")), "devices": ("الأجهزة", ("devices",)),
+              "app": ("الدخول والنسخ الاحتياطي", ("app",))}
+ACCOUNTING_GROUPS = ("sales", "receipts", "counts")
 STATUS_NAMES = {"open": "مفتوح", "received": "مستلم", "cancelled": "ملغي", "pending": "مستني موافقة",
                 "rejected": "مرفوض", "submitted": "مستني المراجعة", "approved": "معتمد"}
 
@@ -774,15 +809,21 @@ STATUS_NAMES = {"open": "مفتوح", "received": "مستلم", "cancelled": "م
 def _audit_value(key, v):
     if v is None:
         return "—"
+    if v == "***":
+        return "(مخفي)"
     if key == "status":
         return STATUS_NAMES.get(v, v)
+    if key == "unit":
+        return UNITS.get(v, v)
+    if key == "permissions" and isinstance(v, str):
+        return "، ".join(PERMISSIONS[p][0].split(":")[0] for p in v.split(",") if p in PERMISSIONS) or "—"
     if key in ("mode", "received_mode"):
         return MODES.get(v, v)
     if isinstance(v, bool):
         return "نعم" if v else "لا"
-    if key in ("unit_price", "total", "unit_cost"):
+    if key in ("unit_price", "total", "unit_cost", "price", "cost"):
         return fmt_money(Decimal(str(v)))
-    if key in ("qty", "received", "counted", "ordered", "stock_at_sync"):
+    if key in ("qty", "received", "counted", "ordered", "stock_at_sync", "min_stock"):
         return fmt_qty(Decimal(str(v)))
     if isinstance(v, str) and len(v) > 18 and v[4:5] == "-" and "T" in v:
         try:
@@ -792,13 +833,47 @@ def _audit_value(key, v):
     return str(v)
 
 
+REF_FIELDS = {"employee_id": Employee, "received_by": Employee, "approved_by": Employee, "reviewed_by": Employee,
+              "device_id": Device, "supplier_id": Supplier, "product_id": Product}
+
+
+def _ref_names(db, entries):
+    """Names for the ids in the log (employee 3 -> its name), looked up once per page."""
+    want = {}
+    for e in entries:
+        for k, pair in e.changes.items():
+            if k in REF_FIELDS:
+                want.setdefault(REF_FIELDS[k], set()).update(v for v in pair if isinstance(v, int))
+    out = {}
+    for model, ids in want.items():
+        if ids:
+            for obj in db.scalars(select(model).where(model.id.in_(ids))):
+                out[(model, obj.id)] = obj.name
+    return out
+
+
 def audit_view(db, entries):
     names = services.actor_names(db, entries)
+    refs = _ref_names(db, entries)
+
+    def val(k, v):
+        if k in REF_FIELDS and isinstance(v, int):
+            return refs.get((REF_FIELDS[k], v), f"#{v}")
+        return _audit_value(k, v)
+
     rows = []
     for e in entries:
-        changes = [(FIELD_NAMES.get(k, k), _audit_value(k, old), _audit_value(k, new)) for k, (old, new) in e.changes.items()]
-        rows.append({"e": e, "who": names.get(e.actor, e.actor) if e.actor else "من خارج البرنامج (SQL مباشر)",
-                     "what": TABLE_NAMES.get(e.table_name, e.table_name), "changes": changes})
+        items = e.changes.items()
+        if e.action == "INSERT":
+            items = [(k, v) for k, v in items if k not in HIDDEN_ON_CREATE]
+        changes = [(FIELD_NAMES.get(k, k), val(k, old), val(k, new)) for k, (old, new) in items]
+        if e.actor:
+            who = names.get(e.actor) or ACTOR_NAMES.get(e.actor, e.actor)
+        else:
+            who = "مجهول" if e.table_name == "app" else "من خارج اللوحة والأجهزة (سكربت أو SQL)"
+        what = EVENT_NAMES.get(e.action, e.action) if e.table_name == "app" else TABLE_NAMES.get(e.table_name, e.table_name)
+        rows.append({"e": e, "who": who, "what": what, "changes": changes, "is_event": e.table_name == "app",
+                     "action": ACTION_NAMES.get(e.action)})
     return rows
 
 
@@ -904,28 +979,36 @@ async def count_correct(cid: str, request: Request, user=Depends(need["accountin
     return await _correct(request, db, user, "count", c, _count_rows, services.correct_count, f"/counts/{cid}")
 
 
-@router.get("/accounting/log", response_class=HTMLResponse)
+@router.get("/accounting/log")
+def old_audit_log():
+    return redirect("/log")
+
+
+@router.get("/log", response_class=HTMLResponse)
 def audit_log(request: Request, d_from: str = "", d_to: str = "", what: str = "", page: int = 1,
-              user=Depends(need["accounting"]), db: Session = Depends(get_db)):
+              user=Depends(current_user), db: Session = Depends(get_db)):
+    if user.can("audit"):
+        allowed = list(LOG_GROUPS)
+    elif user.can("accounting"):
+        allowed = list(ACCOUNTING_GROUPS)
+    else:
+        raise Forbidden()
     today = datetime.now(TZ).date()
     f_from, f_to = parse_date(d_from, today - timedelta(days=30)), parse_date(d_to, today)
     start, end = local_day_range(f_from, f_to)
     q = select(AuditLog).where(AuditLog.at >= start, AuditLog.at < end)
-    groups = {"sales": ("sales", "sale_lines"), "receipts": ("receipts", "receipt_lines"),
-              "counts": ("count_sessions", "count_lines")}
-    if what in groups:
-        q = q.where(AuditLog.table_name.in_(groups[what]))
-    if request.query_params.get("manual") == "1":
+    groups = [what] if what in allowed else allowed
+    q = q.where(AuditLog.table_name.in_([t for g in groups for t in LOG_GROUPS[g][1]]))
+    manual = request.query_params.get("manual") == "1"
+    if manual:
         q = q.where(AuditLog.reason.is_not(None))
     total = db.scalar(select(func.count()).select_from(q.subquery()))
     per = 100
     page = max(1, page)
     entries = db.scalars(q.order_by(AuditLog.at.desc(), AuditLog.id.desc()).offset((page - 1) * per).limit(per)).all()
-    links = {}
-    for e in entries:
-        links[e.id] = audit_link(db, e)
-    return render(request, "audit.html", {"rows": audit_view(db, entries), "links": links, "d_from": f_from, "d_to": f_to,
-                                          "what": what, "manual": request.query_params.get("manual") == "1",
+    return render(request, "audit.html", {"rows": audit_view(db, entries), "links": {e.id: audit_link(db, e) for e in entries},
+                                          "d_from": f_from, "d_to": f_to, "what": what, "manual": manual,
+                                          "groups": [(g, LOG_GROUPS[g][0]) for g in allowed],
                                           "page": page, "pages": max(1, -(-total // per)), "total": total})
 
 
@@ -937,6 +1020,25 @@ def audit_link(db, e):
         return f"/receipts/{e.row_id}"
     if e.table_name == "count_sessions":
         return f"/counts/{e.row_id}"
+    if e.action == "DELETE" and e.table_name in ("products", "employees", "roles"):
+        return None
+    if e.table_name == "products":
+        return f"/products/{e.row_id}"
+    if e.table_name == "employees":
+        return f"/employees/{e.row_id}"
+    if e.table_name == "roles":
+        return f"/roles/{e.row_id}"
+    if e.table_name == "suppliers":
+        return "/suppliers"
+    if e.table_name == "devices":
+        return "/devices"
+    if e.table_name == "product_barcodes":
+        pid = (e.changes.get("product_id") or [None, None])
+        pid = pid[1] if pid[1] is not None else pid[0]
+        if pid is None:
+            b = db.get(ProductBarcode, int(e.row_id))
+            pid = b.product_id if b else None
+        return f"/products/{pid}" if pid else None
     parent = {"sale_lines": (SaleLine, "sale_id", "/sales/"), "receipt_lines": (ReceiptLine, "receipt_id", "/receipts/"),
               "count_lines": (CountLine, "session_id", "/counts/")}.get(e.table_name)
     if not parent:
@@ -998,7 +1100,8 @@ def employee_edit(eid: int, request: Request, user=Depends(need["employees"]), d
     e = db.get(Employee, eid)
     if not e:
         return redirect("/employees")
-    return render(request, "employee_form.html", {"e": e, "form": None, "roles": all_roles(db)})
+    return render(request, "employee_form.html", {"e": e, "form": None, "roles": all_roles(db),
+                                                  **history(db, "employees", e.id, "employees", [])})
 
 
 @router.post("/employees/{eid}")
@@ -1187,10 +1290,12 @@ def backup_page(request: Request, user=Depends(need["backup"])):
 
 
 @router.get("/backup/download")
-def backup_download(user=Depends(need["backup"])):
+def backup_download(request: Request, user=Depends(need["backup"]), db: Session = Depends(get_db)):
     cmd = pg_dump_cmd()
     if not cmd:
         return redirect("/backup")
+    services.log_event(db, "backup_download", f"emp:{user.id}", ip=client_ip(request))
+    db.commit()
     proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
     name = f"tamween-{datetime.now(TZ):%Y%m%d-%H%M}.dump"
 

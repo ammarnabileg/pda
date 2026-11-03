@@ -322,6 +322,12 @@ class EditError(ValueError):
     pass
 
 
+def log_event(db: Session, action: str, actor: str | None = None, **details):
+    """Things that are not a data change (logins, backups). Same append-only log as the triggers."""
+    db.add(AuditLog(at=now(), actor=actor, table_name="app", row_id=action, action=action,
+                    changes={k: [None, v] for k, v in details.items()}))
+
+
 def set_actor(db: Session, actor: str, reason: str | None = None):
     """Who the audit triggers record for the rest of this transaction."""
     db.execute(text("SELECT set_config('tamween.actor', :a, true), set_config('tamween.reason', :r, true)"),

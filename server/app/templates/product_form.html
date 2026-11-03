@@ -121,4 +121,5 @@ document.getElementById('pform').addEventListener('keydown', e => {
   }
 })
 </script>
+{% if history is defined %}<div class="no-print">{% include "_audit.html" %}</div>{% endif %}
 {% endblock %}
