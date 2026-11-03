@@ -585,4 +585,45 @@ void main() {
     await tester.runAsync(() => Future.delayed(const Duration(milliseconds: 300)));
     await tester.pump(const Duration(seconds: 30));
   });
+
+  testWidgets('the supervisor answer reaches the device: home banner and history', (tester) async {
+    final app = await startApp(tester);
+    await tester.runAsync(() async {
+      await app.db.addHistory('new_receipts', 'abc-1', {
+        'supplier': 'مورد جديد',
+        'employee': 'محمود',
+        'lines': [
+          {'product_id': 1, 'name': 'أرز بسمتي ٥ كجم', 'received': '2 كرتون', 'status': 'مستني موافقة المشرف'},
+        ],
+      });
+      await app.db.applyPull({
+        'version': 11,
+        'products': [],
+        'employees': [],
+        'receipts': [],
+        'decisions': [
+          {
+            'id': 'abc-1',
+            'status': 'received',
+            'by': 'المدير',
+            'at': DateTime.now().toUtc().toIso8601String(),
+            'lines': [
+              {'product_id': 1, 'qty': '3.000', 'mode': 'carton'},
+            ],
+          },
+        ],
+      });
+    });
+    await login(tester, 'محمود', '3333');
+    expect(find.text('المشرف رد على 1 سند — اضغط للتفاصيل'), findsOneWidget);
+    await tester.tap(find.text('المشرف رد على 1 سند — اضغط للتفاصيل'));
+    await settle(tester);
+    expect(find.text('وافق المشرف'), findsOneWidget);
+    await tester.tap(find.textContaining('مورد جديد'));
+    await settle(tester);
+    expect(find.textContaining('وافق عليه المدير'), findsOneWidget);
+    expect(find.textContaining('المعتمد 3 كرتون'), findsOneWidget, reason: 'supervisor changed 2 to 3 cartons');
+    expect(await tester.runAsync(() => app.db.unseenDecisions()), 0);
+    await tester.pump(const Duration(seconds: 30));
+  });
 }

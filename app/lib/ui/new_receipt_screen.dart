@@ -207,7 +207,13 @@ class _NewReceiptScreenState extends State<NewReceiptScreen> {
       'diffs': 0,
       'lines': [
         for (final l in lines)
-          {'name': products[l.productId]!.name, 'received': qtyText(l.qty, l.mode), 'status': 'مستني موافقة المشرف', 'note': l.note},
+          {
+            'product_id': l.productId,
+            'name': products[l.productId]!.name,
+            'received': qtyText(l.qty, l.mode),
+            'status': 'مستني موافقة المشرف',
+            'note': l.note,
+          },
       ],
     });
     await app.db.set(_draftKey, null);

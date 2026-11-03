@@ -1,5 +1,5 @@
 """Business rules shared by the device API and the dashboard."""
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from decimal import ROUND_HALF_UP, Decimal
 
 from sqlalchemy import select, update
@@ -82,12 +82,27 @@ def receipt_dict(r: Receipt):
                       for l in r.lines if not l.extra]}
 
 
-def pull(db: Session, since: int):
+def decisions(db: Session, device: Device):
+    """The supervisor's answer on vouchers this device made in the last 60 days."""
+    since = now() - timedelta(days=60)
+    rows = db.scalars(select(Receipt).where(Receipt.device_id == device.id, Receipt.client_id.is_not(None),
+                                             Receipt.created_at >= since)).all()
+    return [{
+        "id": r.client_id,
+        "status": r.status,  # pending | received (approved) | rejected
+        "by": r.approver.name if r.approver else None,
+        "at": r.approved_at.isoformat() if r.approved_at else None,
+        "lines": [{"product_id": l.product_id, "qty": str(l.received), "mode": l.received_mode or l.mode} for l in r.lines],
+    } for r in rows]
+
+
+def pull(db: Session, since: int, device: Device | None = None):
     products = db.scalars(select(Product).where(Product.version > since)).all()
     employees = db.scalars(select(Employee).where(Employee.version > since)).all()
     stmt = select(Receipt).where(Receipt.version > since)
     if since == 0:
         stmt = stmt.where(Receipt.status == "open")  # a fresh device only needs work still to do
+    stmt = stmt.where(Receipt.client_id.is_(None))  # device-made ones come back as "decisions" below
     receipts = db.scalars(stmt).all()
     versions = [since] + [x.version for x in (*products, *employees, *receipts)]
     return {
@@ -97,6 +112,7 @@ def pull(db: Session, since: int):
         "products": [product_dict(p) for p in products],
         "employees": [employee_dict(e) for e in employees],
         "receipts": [receipt_dict(r) for r in receipts],
+        "decisions": decisions(db, device) if device else [],
         # Small list, sent whole every time, for vouchers made on the device.
         "suppliers": [{"id": x.id, "name": x.name} for x in db.scalars(
             select(Supplier).where(Supplier.active.is_(True)).order_by(Supplier.name))],

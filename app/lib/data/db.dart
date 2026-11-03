@@ -250,9 +250,32 @@ class LocalDb {
           'lines': jsonEncode(j['lines']),
         }, conflictAlgorithm: ConflictAlgorithm.replace);
       }
+      // Supervisor's answer on vouchers made here: kept on the history entry.
+      final unseen = <String>{
+        ...((jsonDecode((await txn.query('kv', where: "key = 'unseen_decisions'")).firstOrNull?['value'] as String? ?? '[]') as List)
+            .cast<String>()),
+      };
+      for (final d in (data['decisions'] as List?) ?? const []) {
+        final rows = await txn.query('history', where: "kind = 'new_receipts' AND id = ?", whereArgs: [d['id']]);
+        if (rows.isEmpty) continue;
+        final h = jsonDecode(rows.first['data'] as String) as Map<String, dynamic>;
+        final before = (h['decision'] as Map?)?['status'];
+        if (before == d['status']) continue;
+        h['decision'] = d;
+        await txn.update('history', {'data': jsonEncode(h)}, where: 'id = ?', whereArgs: [d['id']]);
+        if (d['status'] != 'pending') unseen.add(d['id'] as String);
+      }
+      await txn.insert('kv', {
+        'key': 'unseen_decisions',
+        'value': jsonEncode(unseen.toList()),
+      }, conflictAlgorithm: ConflictAlgorithm.replace);
       await txn.insert('kv', {'key': 'version', 'value': '${data['version']}'}, conflictAlgorithm: ConflictAlgorithm.replace);
     });
   }
+
+  /// Vouchers the supervisor answered that nobody has looked at on this device yet.
+  Future<int> unseenDecisions() async => ((await getJson('unseen_decisions') as List?) ?? const []).length;
+  Future<void> clearUnseenDecisions() => setJson('unseen_decisions', <String>[]);
 
   Future<List<(int, String)>> suppliers() async {
     final r = await db.query('suppliers', orderBy: 'name');

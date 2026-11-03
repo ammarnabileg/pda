@@ -37,6 +37,8 @@ class _HistoryScreenState extends State<HistoryScreen> {
   }
 
   Future<void> _load() async {
+    if (widget.kind == 'receipts') await AppScope.read(context).db.clearUnseenDecisions();
+    if (!mounted) return;
     final now = DateTime.now();
     final r = await AppScope.read(context).db.history(widget.kind, since: todayOnly ? DateTime(now.year, now.month, now.day) : null);
     if (mounted) setState(() => items = r);
@@ -104,7 +106,9 @@ class _HistoryScreenState extends State<HistoryScreen> {
       title: title,
       amount: amount,
       details: Text('${_day(e.at)} ${_time(e.at)} · $details'),
-      controls: _SendBadge(outboxKey: e.outboxKey),
+      controls: e.kind == 'new_receipts' && d['decision'] != null
+          ? _decisionPill(d['decision'] as Map)
+          : _SendBadge(outboxKey: e.outboxKey),
       onTap: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => _HistoryDetail(entry: e))),
     );
   }
@@ -172,6 +176,7 @@ class _HistoryDetail extends StatelessWidget {
                   alignment: AlignmentDirectional.centerStart,
                   child: SendStatus(outboxKey: entry.outboxKey),
                 ),
+                if (entry.kind == 'new_receipts') ...[const SizedBox(height: S.s), _decisionCard(d['decision'] as Map?)],
               ],
             ),
           ),
@@ -193,6 +198,7 @@ class _HistoryDetail extends StatelessWidget {
                   [
                     if (l['ordered'] != null) 'مطلوب ${l['ordered']}',
                     'مستلم ${l['received']}',
+                    if (_approvedQty(d['decision'] as Map?, l) case final q?) 'المعتمد $q',
                     if ((l['note'] as String?)?.isNotEmpty == true) 'ملاحظة: ${l['note']}',
                   ].join(' · '),
                 ),
@@ -203,4 +209,47 @@ class _HistoryDetail extends StatelessWidget {
       ),
     );
   }
+}
+
+/// Supervisor's answer on a voucher made on this device.
+Widget _decisionPill(Map d) => switch (d['status']) {
+  'received' => const Pill('وافق المشرف', fg: cGreen, bg: cGreen2, icon: Icons.verified_outlined),
+  'rejected' => const Pill('المشرف رفضه', fg: cRed, bg: cRed2, icon: Icons.block),
+  _ => const Pill('مستني المشرف', fg: cOrange, bg: cOrange2, icon: Icons.hourglass_top),
+};
+
+Widget _decisionCard(Map? d) {
+  final status = d?['status'];
+  final at = DateTime.tryParse('${d?['at']}')?.toLocal();
+  final when = at == null ? '' : ' · ${_day(at)} ${_time(at)}';
+  final (IconData icon, String text, Color fg, Color bg) = switch (status) {
+    'received' => (Icons.verified_outlined, 'وافق عليه ${d?['by'] ?? 'المشرف'}$when — الرصيد زاد', cGreen, cGreen2),
+    'rejected' => (Icons.block, 'رفضه ${d?['by'] ?? 'المشرف'}$when — الرصيد ماتغيرش', cRed, cRed2),
+    _ => (Icons.hourglass_top, 'مستني موافقة المشرف', cOrange, cOrange2),
+  };
+  return Container(
+    padding: const EdgeInsets.all(S.s),
+    decoration: BoxDecoration(color: bg, borderRadius: BorderRadius.circular(S.radius)),
+    child: Row(
+      children: [
+        Icon(icon, color: fg),
+        const SizedBox(width: S.s),
+        Expanded(
+          child: Text(text, style: T.label.copyWith(color: fg)),
+        ),
+      ],
+    ),
+  );
+}
+
+/// The approved quantity when the supervisor changed it.
+String? _approvedQty(Map? d, Map l) {
+  if (d == null || d['status'] != 'received' || l['product_id'] == null) return null;
+  for (final x in (d['lines'] as List? ?? const [])) {
+    if (x['product_id'] == l['product_id']) {
+      final t = qtyText(parseMilli('${x['qty']}') ?? 0, '${x['mode']}');
+      return t == l['received'] ? null : t;
+    }
+  }
+  return null;
 }

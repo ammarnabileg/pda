@@ -229,3 +229,17 @@ def test_supervisor_rejects_device_receipt(device_client, admin_client, seed, db
     for st in ("pending", "rejected", "all"):
         assert admin_client.get(f"/receipts?status={st}").status_code == 200
 
+
+def test_device_sees_supervisor_decision(device_client, admin_client, seed, db):
+    cid = str(uuid.uuid4())
+    device_client.post("/api/v1/sync/push", json={"new_receipts": [{"id": cid, "supplier_id": seed["supplier"].id,
+        "lines": [{"product_id": seed["rice"].id, "mode": "carton", "qty": 2}]}]})
+    d = device_client.get("/api/v1/sync/pull?since=0").json()
+    assert [x["status"] for x in d["decisions"] if x["id"] == cid] == ["pending"]
+    assert all(r.get("id") for r in d["receipts"])  # device-made vouchers are not listed as work to do
+    rec = db.query(Receipt).filter_by(client_id=cid).one()
+    line = rec.lines[0]
+    admin_client.post(f"/receipts/{rec.id}/approve", data={f"q_{line.id}": "3"})
+    dec = next(x for x in device_client.get("/api/v1/sync/pull?since=999999").json()["decisions"] if x["id"] == cid)
+    assert dec["status"] == "received" and dec["by"] == "المدير" and dec["lines"][0]["qty"] == "3.000"
+

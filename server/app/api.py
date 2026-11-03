@@ -54,7 +54,7 @@ def pair(body: PairIn, db: Session = Depends(get_db)):
 
 @router.get("/sync/pull")
 def sync_pull(since: int = 0, device: Device = Depends(current_device), db: Session = Depends(get_db)):
-    return services.pull(db, max(0, since))
+    return services.pull(db, max(0, since), device)
 
 
 @router.post("/sync/push")

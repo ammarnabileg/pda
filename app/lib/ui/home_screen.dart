@@ -16,7 +16,7 @@ class HomeScreen extends StatefulWidget {
 }
 
 class _HomeScreenState extends State<HomeScreen> {
-  int saleItems = 0, countItems = 0, openReceipts = 0;
+  int saleItems = 0, countItems = 0, openReceipts = 0, decisions = 0;
 
   @override
   void didChangeDependencies() {
@@ -29,11 +29,13 @@ class _HomeScreenState extends State<HomeScreen> {
     final sale = await db.getJson('draft_sale');
     final count = await db.getJson('draft_count');
     final rec = await db.openReceipts();
+    final dec = await db.unseenDecisions();
     if (!mounted) return;
     setState(() {
       saleItems = sale is Map ? ((sale['lines'] as List?)?.length ?? 0) : 0;
       countItems = count is Map ? ((count['lines'] as List?)?.length ?? 0) : 0;
       openReceipts = rec.length;
+      decisions = dec;
     });
   }
 
@@ -88,6 +90,30 @@ class _HomeScreenState extends State<HomeScreen> {
               child: ListView(
                 padding: const EdgeInsets.all(S.edge),
                 children: [
+                  if (decisions > 0 && e.canStock)
+                    Padding(
+                      padding: const EdgeInsets.only(bottom: S.s),
+                      child: Material(
+                        color: cBlue2,
+                        borderRadius: BorderRadius.circular(S.radius),
+                        child: InkWell(
+                          borderRadius: BorderRadius.circular(S.radius),
+                          onTap: () => _open(const HistoryScreen(kind: 'receipts')),
+                          child: Padding(
+                            padding: const EdgeInsets.all(S.m),
+                            child: Row(
+                              children: [
+                                const Icon(Icons.mark_email_unread_outlined, color: cBlue),
+                                const SizedBox(width: S.s),
+                                Expanded(
+                                  child: Text('المشرف رد على $decisions سند — اضغط للتفاصيل', style: T.label.copyWith(color: cBlue)),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
                   if (app.rejected > 0 && e.isSupervisor)
                     CardBox(
                       color: cOrange2,
