@@ -3,6 +3,7 @@
 <div class="bar"><h1>سند استلام {{ r.id }}</h1>
   {% if r.status == 'open' %}<a class="btn light" href="/receipts/{{ r.id }}/edit">تعديل</a>
   <form class="inline" method="post" action="/receipts/{{ r.id }}/cancel" onsubmit="return confirm('إلغاء السند؟ سيختفي من الأجهزة.')"><button class="btn red">إلغاء السند</button></form>{% endif %}
+  {% if r.status == 'received' and user.can('accounting') %}<a class="btn light no-print" href="/accounting/receipts/{{ r.id }}">تعديل (المحاسبة)</a>{% endif %}
   <button class="btn light no-print" onclick="print()">طباعة</button>
   <a class="btn light no-print" href="/receipts">رجوع</a></div>
 <div class="card grid">
@@ -38,4 +39,5 @@
 {% if r.status == 'received' %}<td>{{ l.received|qty(l.product.unit) }} {{ MODES[l.received_mode or l.mode] }}</td>
 <td>{% set d = l.diff_base %}{% if d == 0 %}<span class="zero">مطابق</span>{% elif d < 0 %}<span class="neg">ناقص {{ base_text(l.product, -d) }}</span>{% else %}<span class="pos">زيادة {{ base_text(l.product, d) }}</span>{% endif %}</td>{% endif %}</tr>
 {% endfor %}</table></div>
+<div class="no-print">{% include "_audit.html" %}</div>
 {% endblock %}

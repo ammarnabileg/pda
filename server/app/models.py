@@ -4,6 +4,7 @@ from decimal import Decimal
 from sqlalchemy import (
     BigInteger, Boolean, DateTime, ForeignKey, Integer, Numeric, String, Text, Uuid,
 )
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from .db import Base
@@ -29,6 +30,7 @@ PERMISSIONS = {
     "receipts": ("سندات الاستلام والموافقة عليها", "لوحة التحكم"),
     "sales": ("المبيعات والتقارير والأرباح", "لوحة التحكم"),
     "counts": ("مراجعة الجرد واعتماده", "لوحة التحكم"),
+    "accounting": ("المحاسبة: تعديل الفواتير والسندات والجرد بعد ما تتقفل، وسجل التعديلات", "لوحة التحكم"),
     "employees": ("الموظفين والأدوار والصلاحيات", "لوحة التحكم"),
     "devices": ("الأجهزة وربطها", "لوحة التحكم"),
     "backup": ("النسخ الاحتياطي", "لوحة التحكم"),
@@ -39,7 +41,8 @@ ALL_PERMISSIONS = frozenset(PERMISSIONS)
 DEFAULT_ROLES = [
     ("cashier", "كاشير", {"sale", "price", "see_cost"}),
     ("storekeeper", "أمين مخزن", {"price", "see_cost", "count", "receive", "new_receipt"}),
-    ("supervisor", "مشرف", ALL_PERMISSIONS - {"employees", "devices", "backup"}),
+    ("supervisor", "مشرف", ALL_PERMISSIONS - {"employees", "devices", "backup", "accounting"}),
+    ("accountant", "محاسب", {"dashboard", "sales", "receipts", "counts", "accounting"}),
     ("admin", "مدير", ALL_PERMISSIONS),
 ]
 ADMIN_ROLE = "admin"  # always has every permission, so the system can never lock everyone out
@@ -292,3 +295,19 @@ class CountLine(Base):
     @property
     def diff(self):
         return self.counted - self.stock_at_sync
+
+
+class AuditLog(Base):
+    """Every change to a sale, voucher or count, written by PostgreSQL triggers (see db.KEEP_FOREVER).
+
+    Never updated or deleted. actor is "emp:<id>", "dev:<id>" or empty for a change made outside the app.
+    """
+    __tablename__ = "audit_log"
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    actor: Mapped[str | None] = mapped_column(String(40))
+    reason: Mapped[str | None] = mapped_column(Text)
+    table_name: Mapped[str] = mapped_column(String(40))
+    row_id: Mapped[str] = mapped_column(String(64))
+    action: Mapped[str] = mapped_column(String(10))
+    changes: Mapped[dict] = mapped_column(JSONB)

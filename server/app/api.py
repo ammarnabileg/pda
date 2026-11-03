@@ -28,6 +28,7 @@ def current_device(authorization: str = Header(default=""), db: Session = Depend
     if not device.last_seen or seen - device.last_seen > timedelta(seconds=30):
         device.last_seen = seen
         db.commit()
+    services.set_actor(db, f"dev:{device.id}")  # the audit log records changes made by this upload
     return device
 
 

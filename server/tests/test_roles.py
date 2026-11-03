@@ -18,8 +18,8 @@ def test_default_roles_seeded(db):
 
 
 def test_custom_role_limits_dashboard_pages(admin_client, db, seed):
-    make_role(admin_client, "محاسب", ["dashboard", "sales"])
-    role = db.query(Role).filter_by(name="محاسب").one()
+    make_role(admin_client, "مراجع مبيعات", ["dashboard", "sales"])
+    role = db.query(Role).filter_by(name="مراجع مبيعات").one()
     salt, h = hash_pin("5555")
     db.add(Employee(name="سامي", role=role.key, pin_salt=salt, pin_hash=h, username="sami",
                     password_hash=hash_password("password123")))

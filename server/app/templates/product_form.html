@@ -78,8 +78,8 @@
 </form>{% endif %}
 <h2>آخر حركات المخزون</h2>
 <div class="table-wrap"><table><thead><tr><th>الوقت</th><th>النوع</th><th class="num">الكمية</th><th>مرجع / ملاحظة</th></tr></thead>
-{% set reasons = {"sale": "بيع", "receipt": "استلام", "count": "جرد", "manual": "يدوي"} %}
-{% for m in moves %}<tr><td>{{ m.created_at|dt }}</td><td>{{ reasons[m.reason] }}</td><td class="num {{ 'neg' if m.delta < 0 else 'pos' }}">{{ m.delta|qty(p.unit) }}</td><td>{% if m.reason == 'sale' and m.ref %}<a href="/sales/{{ m.ref }}">فاتورة {{ m.ref[:8] }}</a>{% elif m.reason == 'receipt' and m.ref %}<a href="/receipts/{{ m.ref[2:] }}">سند {{ m.ref[2:] }}</a>{% else %}{{ m.note or m.ref or '' }}{% endif %}</td></tr>
+{% set reasons = {"sale": "بيع", "receipt": "استلام", "count": "جرد", "manual": "يدوي", "edit": "تعديل محاسبة"} %}
+{% for m in moves %}<tr><td>{{ m.created_at|dt }}</td><td>{{ reasons[m.reason] }}</td><td class="num {{ 'neg' if m.delta < 0 else 'pos' }}">{{ m.delta|qty(p.unit) }}</td><td>{% if m.reason == 'sale' and m.ref %}<a href="/sales/{{ m.ref }}">فاتورة {{ m.ref[:8] }}</a>{% elif m.reason == 'edit' and m.ref and m.ref[:2] == 'R-' %}<a href="/receipts/{{ m.ref[2:] }}">تعديل سند {{ m.ref[2:] }}</a> · {{ m.note or '' }}{% elif m.reason == 'edit' and m.ref and m.ref[:2] != 'C-' %}<a href="/sales/{{ m.ref }}">تعديل فاتورة {{ m.ref[:8] }}</a> · {{ m.note or '' }}{% elif m.reason == 'receipt' and m.ref %}<a href="/receipts/{{ m.ref[2:] }}">سند {{ m.ref[2:] }}</a>{% else %}{{ m.note or m.ref or '' }}{% endif %}</td></tr>
 {% else %}<tr><td colspan="4" class="muted">لا توجد حركات</td></tr>{% endfor %}
 </table></div>
 {% endif %}

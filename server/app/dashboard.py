@@ -19,7 +19,7 @@ from sqlalchemy.orm import Session
 from . import config, services
 from .db import get_db
 from .models import (
-    ADMIN_ROLE, MODES, PERMISSIONS, UNITS, CountLine, CountSession, Device, Employee, Product, ProductBarcode, Receipt, ReceiptLine,
+    ADMIN_ROLE, MODES, PERMISSIONS, UNITS, AuditLog, CountLine, CountSession, Device, Employee, Product, ProductBarcode, Receipt, ReceiptLine,
     Role, Sale, SaleLine, StockMove, Supplier, now,
 )
 from .security import hash_password, hash_pin, new_pairing_code, verify_password, verify_pin
@@ -91,6 +91,7 @@ def current_user(request: Request, db: Session = Depends(get_db)) -> Employee:
     if not user or not user.active or not user.can_dashboard:
         raise LoginRequired()
     request.state.user = user
+    services.set_actor(db, f"emp:{user.id}")  # recorded by the audit log for anything this request changes
     return user
 
 
@@ -577,7 +578,7 @@ def receipt_detail(rid: int, request: Request, user=Depends(need["receipts"]), d
     r = db.get(Receipt, rid)
     if not r:
         return redirect("/receipts")
-    return render(request, "receipt.html", {"r": r})
+    return render(request, "receipt.html", {"r": r, **history(db, "receipts", r.id, "receipt_lines", [l.id for l in r.lines])})
 
 
 @router.get("/receipts/{rid}/edit", response_class=HTMLResponse)
@@ -672,7 +673,7 @@ def sale_detail(sid: str, request: Request, user=Depends(need["sales"]), db: Ses
         s = None
     if not s:
         return redirect("/sales")
-    return render(request, "sale.html", {"s": s})
+    return render(request, "sale.html", {"s": s, **history(db, "sales", s.id, "sale_lines", [l.id for l in s.lines])})
 
 
 @router.get("/reports", response_class=HTMLResponse)
@@ -736,7 +737,8 @@ def count_detail(cid: str, request: Request, user=Depends(need["counts"]), db: S
              "short": sum(1 for l in c.lines if l.diff < 0), "over": sum(1 for l in c.lines if l.diff > 0)}
     only = request.query_params.get("only") == "diff"
     lines = [l for l in c.lines if not only or l.diff != 0]
-    return render(request, "count.html", {"c": c, "value": value, "stats": stats, "lines": lines, "only": only})
+    return render(request, "count.html", {"c": c, "value": value, "stats": stats, "lines": lines, "only": only,
+                                          **history(db, "count_sessions", c.id, "count_lines", [l.id for l in c.lines])})
 
 
 @router.post("/counts/{cid}/{action}")
@@ -752,6 +754,199 @@ def count_review(cid: str, action: str, request: Request, user=Depends(need["cou
         flash(request, "تم رفض الجرد بدون تعديل الأرصدة")
     db.commit()
     return redirect(f"/counts/{cid}")
+
+
+# ---------- accounting: corrections after a record is closed, and the audit log ----------
+
+FIELD_NAMES = {
+    "qty": "الكمية", "unit_price": "السعر", "total": "الإجمالي", "received": "المستلم", "received_mode": "وحدة الاستلام",
+    "counted": "المعدود", "status": "الحالة", "note": "ملاحظة", "ordered": "المطلوب", "mode": "الوحدة",
+    "received_at": "وقت الاستلام", "received_by": "استلمه", "approved_by": "وافق عليه", "approved_at": "وقت الموافقة",
+    "reviewed_by": "راجعه", "reviewed_at": "وقت المراجعة", "supplier_id": "المورد", "device_notes": "ملاحظات الجهاز",
+    "product_id": "الصنف", "extra": "زائد", "stock_at_sync": "الرصيد وقت الوصول",
+}
+TABLE_NAMES = {"sales": "فاتورة", "sale_lines": "سطر فاتورة", "receipts": "سند", "receipt_lines": "سطر سند",
+               "count_sessions": "جرد", "count_lines": "سطر جرد"}
+STATUS_NAMES = {"open": "مفتوح", "received": "مستلم", "cancelled": "ملغي", "pending": "مستني موافقة",
+                "rejected": "مرفوض", "submitted": "مستني المراجعة", "approved": "معتمد"}
+
+
+def _audit_value(key, v):
+    if v is None:
+        return "—"
+    if key == "status":
+        return STATUS_NAMES.get(v, v)
+    if key in ("mode", "received_mode"):
+        return MODES.get(v, v)
+    if isinstance(v, bool):
+        return "نعم" if v else "لا"
+    if key in ("unit_price", "total", "unit_cost"):
+        return fmt_money(Decimal(str(v)))
+    if key in ("qty", "received", "counted", "ordered", "stock_at_sync"):
+        return fmt_qty(Decimal(str(v)))
+    if isinstance(v, str) and len(v) > 18 and v[4:5] == "-" and "T" in v:
+        try:
+            return fmt_dt(datetime.fromisoformat(v))
+        except ValueError:
+            return v
+    return str(v)
+
+
+def audit_view(db, entries):
+    names = services.actor_names(db, entries)
+    rows = []
+    for e in entries:
+        changes = [(FIELD_NAMES.get(k, k), _audit_value(k, old), _audit_value(k, new)) for k, (old, new) in e.changes.items()]
+        rows.append({"e": e, "who": names.get(e.actor, e.actor) if e.actor else "من خارج البرنامج (SQL مباشر)",
+                     "what": TABLE_NAMES.get(e.table_name, e.table_name), "changes": changes})
+    return rows
+
+
+def history(db, table, row_id, lines_table, line_ids):
+    return {"history": audit_view(db, services.audit_for(db, table, row_id, lines_table, line_ids))}
+
+
+def _num(f, name):
+    v = dec(f.get(name))
+    if v is None:
+        raise services.EditError("فيه خانة فاضية أو رقم غلط")
+    return v
+
+
+def _correct_page(request, kind, obj, rows, errors=None, reason=""):
+    return render(request, "correct.html", {"kind": kind, "obj": obj, "rows": rows, "errors": errors, "reason": reason},
+                  400 if errors else 200)
+
+
+def _sale_rows(s, f=None):
+    return [{"id": l.id, "name": l.product.name, "unit": MODES[l.mode],
+             "fields": [("q", "الكمية", f.get(f"q_{l.id}") if f else fmt_qty(l.qty, l.product.unit)),
+                        ("p", "السعر", f.get(f"p_{l.id}") if f else fmt_money(l.unit_price))]} for l in s.lines]
+
+
+def _receipt_rows(r, f=None):
+    return [{"id": l.id, "name": l.product.name, "unit": MODES[l.received_mode or l.mode],
+             "fields": [("q", "المستلم", f.get(f"q_{l.id}") if f else fmt_qty(l.received or 0, l.product.unit))]}
+            for l in r.lines]
+
+
+def _count_rows(c, f=None):
+    return [{"id": l.id, "name": l.product.name, "unit": "كجم" if l.product.unit == "kg" else "حبة",
+             "fields": [("q", "المعدود", f.get(f"q_{l.id}") if f else fmt_qty(l.counted, l.product.unit))]} for l in c.lines]
+
+
+async def _correct(request, db, user, kind, obj, rows_fn, apply, back):
+    f = await request.form()
+    reason = str(f.get("reason", "")).strip()
+    try:
+        if len(reason) < 3:
+            raise services.EditError("اكتب سبب التعديل")
+        if kind == "sale":
+            changes = {l.id: (_num(f, f"q_{l.id}"), _num(f, f"p_{l.id}")) for l in obj.lines}
+        else:
+            changes = {l.id: _num(f, f"q_{l.id}") for l in obj.lines}
+        services.set_actor(db, f"emp:{user.id}", reason)
+        n = apply(db, obj, changes, user.id, reason)
+    except services.EditError as e:
+        db.rollback()
+        return _correct_page(request, kind, obj, rows_fn(obj, f), [str(e)], reason)
+    if not n:
+        db.rollback()
+        return _correct_page(request, kind, obj, rows_fn(obj, f), ["مفيش حاجة اتغيّرت"], reason)
+    db.commit()
+    flash(request, f"تم تعديل {n} سطر، واتسجل في سجل التعديلات")
+    return redirect(back)
+
+
+@router.get("/accounting/sales/{sid}", response_class=HTMLResponse)
+def sale_correct_form(sid: str, request: Request, user=Depends(need["accounting"]), db: Session = Depends(get_db)):
+    s = db.get(Sale, sid)
+    return _correct_page(request, "sale", s, _sale_rows(s)) if s else redirect("/sales")
+
+
+@router.post("/accounting/sales/{sid}")
+async def sale_correct(sid: str, request: Request, user=Depends(need["accounting"]), db: Session = Depends(get_db)):
+    s = db.get(Sale, sid)
+    if not s:
+        return redirect("/sales")
+    return await _correct(request, db, user, "sale", s, _sale_rows, services.edit_sale, f"/sales/{sid}")
+
+
+@router.get("/accounting/receipts/{rid}", response_class=HTMLResponse)
+def receipt_correct_form(rid: int, request: Request, user=Depends(need["accounting"]), db: Session = Depends(get_db)):
+    r = db.get(Receipt, rid)
+    if not r or r.status != "received":
+        return redirect(f"/receipts/{rid}")
+    return _correct_page(request, "receipt", r, _receipt_rows(r))
+
+
+@router.post("/accounting/receipts/{rid}")
+async def receipt_correct(rid: int, request: Request, user=Depends(need["accounting"]), db: Session = Depends(get_db)):
+    r = db.get(Receipt, rid)
+    if not r or r.status != "received":
+        return redirect(f"/receipts/{rid}")
+    return await _correct(request, db, user, "receipt", r, _receipt_rows, services.correct_receipt, f"/receipts/{rid}")
+
+
+@router.get("/accounting/counts/{cid}", response_class=HTMLResponse)
+def count_correct_form(cid: str, request: Request, user=Depends(need["accounting"]), db: Session = Depends(get_db)):
+    c = db.get(CountSession, cid)
+    if not c or c.status == "rejected":
+        return redirect(f"/counts/{cid}")
+    return _correct_page(request, "count", c, _count_rows(c))
+
+
+@router.post("/accounting/counts/{cid}")
+async def count_correct(cid: str, request: Request, user=Depends(need["accounting"]), db: Session = Depends(get_db)):
+    c = db.get(CountSession, cid)
+    if not c or c.status == "rejected":
+        return redirect(f"/counts/{cid}")
+    return await _correct(request, db, user, "count", c, _count_rows, services.correct_count, f"/counts/{cid}")
+
+
+@router.get("/accounting/log", response_class=HTMLResponse)
+def audit_log(request: Request, d_from: str = "", d_to: str = "", what: str = "", page: int = 1,
+              user=Depends(need["accounting"]), db: Session = Depends(get_db)):
+    today = datetime.now(TZ).date()
+    f_from, f_to = parse_date(d_from, today - timedelta(days=30)), parse_date(d_to, today)
+    start, end = local_day_range(f_from, f_to)
+    q = select(AuditLog).where(AuditLog.at >= start, AuditLog.at < end)
+    groups = {"sales": ("sales", "sale_lines"), "receipts": ("receipts", "receipt_lines"),
+              "counts": ("count_sessions", "count_lines")}
+    if what in groups:
+        q = q.where(AuditLog.table_name.in_(groups[what]))
+    if request.query_params.get("manual") == "1":
+        q = q.where(AuditLog.reason.is_not(None))
+    total = db.scalar(select(func.count()).select_from(q.subquery()))
+    per = 100
+    page = max(1, page)
+    entries = db.scalars(q.order_by(AuditLog.at.desc(), AuditLog.id.desc()).offset((page - 1) * per).limit(per)).all()
+    links = {}
+    for e in entries:
+        links[e.id] = audit_link(db, e)
+    return render(request, "audit.html", {"rows": audit_view(db, entries), "links": links, "d_from": f_from, "d_to": f_to,
+                                          "what": what, "manual": request.query_params.get("manual") == "1",
+                                          "page": page, "pages": max(1, -(-total // per)), "total": total})
+
+
+def audit_link(db, e):
+    """The page of the record a log line belongs to."""
+    if e.table_name == "sales":
+        return f"/sales/{e.row_id}"
+    if e.table_name == "receipts":
+        return f"/receipts/{e.row_id}"
+    if e.table_name == "count_sessions":
+        return f"/counts/{e.row_id}"
+    parent = {"sale_lines": (SaleLine, "sale_id", "/sales/"), "receipt_lines": (ReceiptLine, "receipt_id", "/receipts/"),
+              "count_lines": (CountLine, "session_id", "/counts/")}.get(e.table_name)
+    if not parent:
+        return None
+    if e.action == "DELETE":
+        pid = e.changes.get(parent[1], [None])[0]
+    else:
+        row = db.get(parent[0], int(e.row_id))
+        pid = getattr(row, parent[1]) if row else None
+    return f"{parent[2]}{pid}" if pid else None
 
 
 # ---------- employees ----------

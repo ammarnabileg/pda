@@ -1,0 +1,24 @@
+{% extends "base.html" %}
+{% set titles = {"sale": "تعديل فاتورة", "receipt": "تعديل سند مستلم", "count": "تعديل جرد"} %}
+{% set backs = {"sale": "/sales/" ~ obj.id, "receipt": "/receipts/" ~ obj.id, "count": "/counts/" ~ obj.id} %}
+{% block title %}{{ titles[kind] }}{% endblock %}
+{% block content %}
+<div class="bar"><h1>{{ titles[kind] }}</h1><a class="btn light" href="{{ backs[kind] }}">رجوع</a></div>
+{% include "_errors.html" %}
+<div class="alert" style="background:var(--blue-2);color:var(--blue)">
+  {% if kind == 'sale' %}غيّر الكمية أو السعر. الرصيد بيتظبط بالفرق، وإجمالي الفاتورة بيتحسب تاني. لو صنف اتشال من الفاتورة خلّي كميته 0 (السطور مابتتمسحش).
+  {% elif kind == 'receipt' %}غيّر الكمية المستلمة. الرصيد بيتظبط بالفرق بين القديم والجديد.
+  {% elif obj.status == 'approved' %}الجرد ده معتمد: تغيير المعدود بيظبط الرصيد بالفرق بين القديم والجديد.
+  {% else %}الجرد ده لسه مستني المراجعة: التعديل بيغيّر المعدود بس، والرصيد بيتغيّر لما يتعتمد.{% endif %}
+  <br><b>كل تعديل بيتسجل باسمك ووقته وسببه، والقيمة القديمة والجديدة، ومايتمسحش.</b>
+</div>
+<form method="post" class="card">
+  <div class="table-wrap" style="max-height:none"><table><thead><tr><th>الصنف</th>{% for _, label, _ in rows[0].fields if rows %}<th>{{ label }}</th>{% endfor %}</tr></thead>
+  {% for r in rows %}<tr><td>{{ r.name }}</td>
+    {% for name, label, value in r.fields %}<td><input name="{{ name }}_{{ r.id }}" value="{{ value }}" inputmode="decimal" dir="ltr" style="max-width:120px" aria-label="{{ label }} {{ r.name }}"> {% if name == 'q' %}{{ r.unit }}{% else %}د.ك{% endif %}</td>{% endfor %}
+  </tr>{% endfor %}
+  </table></div>
+  <div class="field" style="margin-top:12px"><label for="reason">سبب التعديل (إجباري)</label><input id="reason" name="reason" value="{{ reason }}" required minlength="3" maxlength="300" placeholder="مثال: الكاشير سجّل 3 بدل 2، مراجعة الفاتورة الورقية"></div>
+  <button class="btn" onclick="return confirm('حفظ التعديل؟ هيتسجل في سجل التعديلات.')">حفظ التعديل</button>
+</form>
+{% endblock %}

@@ -2,12 +2,12 @@
 from datetime import datetime, timedelta, timezone
 from decimal import ROUND_HALF_UP, Decimal
 
-from sqlalchemy import select, update
+from sqlalchemy import or_, select, text, update
 from sqlalchemy.orm import Session
 
 from .db import next_version
 from .models import (
-    CountLine, CountSession, Device, Employee, Product, ProductBarcode, Receipt, ReceiptLine, Sale, SaleLine, Supplier,
+    AuditLog, CountLine, CountSession, Device, Employee, Product, ProductBarcode, Receipt, ReceiptLine, Sale, SaleLine, Supplier,
     StockMove, now,
 )
 
@@ -156,8 +156,7 @@ def push_sale(db: Session, device: Device, data: dict):
     emp = _employee_id(db, data.get("employee_id"))
     sale = Sale(id=data["id"], device_id=device.id, employee_id=emp,
                 created_at=_parse_time(data.get("created_at")), total=0)
-    db.add(sale)
-    total = Decimal(0)
+    stock = []
     for ln in lines:
         p = _product(db, ln["product_id"])
         mode, qty = ln["mode"], d3(ln["qty"])
@@ -165,12 +164,14 @@ def push_sale(db: Session, device: Device, data: dict):
             raise SyncError("bad_line")
         price = d3(ln["unit_price"])
         cost = d3(p.cost * p.carton if mode == "carton" else p.cost)
-        line_total = d3(price * qty)
-        total += line_total
         sale.lines.append(SaleLine(product_id=p.id, mode=mode, qty=qty, unit_price=price,
-                                   unit_cost=cost, total=line_total))
-        move_stock(db, p, -p.to_base(qty, mode), "sale", ref=str(sale.id), employee_id=emp)
-    sale.total = d3(total)
+                                   unit_cost=cost, total=d3(price * qty)))
+        stock.append((p, -p.to_base(qty, mode)))
+    # The total is set before the first write, so the audit log never shows a sale "changing" while it is stored.
+    sale.total = d3(sum(line.total for line in sale.lines))
+    db.add(sale)
+    for p, delta in stock:
+        move_stock(db, p, delta, "sale", ref=str(sale.id), employee_id=emp)
 
 
 def push_count(db: Session, device: Device, data: dict):
@@ -313,3 +314,101 @@ def approve_count(db: Session, session: CountSession, reviewer_id: int):
     session.status = "approved"
     session.reviewed_by = reviewer_id
     session.reviewed_at = now()
+
+
+# ---------- Accounting corrections and the audit log ----------
+
+class EditError(ValueError):
+    pass
+
+
+def set_actor(db: Session, actor: str, reason: str | None = None):
+    """Who the audit triggers record for the rest of this transaction."""
+    db.execute(text("SELECT set_config('tamween.actor', :a, true), set_config('tamween.reason', :r, true)"),
+               {"a": actor, "r": reason or ""})
+
+
+def _whole_ok(p: Product, mode: str, q: Decimal):
+    if q < 0:
+        raise EditError("الكمية مينفعش تكون بالسالب")
+    if (p.unit != "kg" or mode == "carton") and q != q.to_integral_value():
+        raise EditError(f"{p.name}: الكمية لازم تكون رقم صحيح")
+
+
+def edit_sale(db: Session, sale: Sale, changes: dict, user_id: int, reason: str) -> int:
+    """changes: {line_id: (qty, unit_price)} in each line's own unit. Stock follows the quantity change."""
+    n = 0
+    for line in sale.lines:
+        if line.id not in changes:
+            continue
+        q, price = (d3(v) for v in changes[line.id])
+        _whole_ok(line.product, line.mode, q)
+        if price < 0:
+            raise EditError("السعر مينفعش يكون بالسالب")
+        if q == line.qty and price == line.unit_price:
+            continue
+        delta = line.product.to_base(q, line.mode) - line.product.to_base(line.qty, line.mode)
+        move_stock(db, line.product, -delta, "edit", ref=str(sale.id), employee_id=user_id, note=reason)
+        line.qty, line.unit_price, line.total = q, price, d3(q * price)
+        n += 1
+    sale.total = d3(sum(line.total for line in sale.lines))
+    return n
+
+
+def correct_receipt(db: Session, r: Receipt, changes: dict, user_id: int, reason: str) -> int:
+    """changes: {line_id: received qty} in the unit it was received in. Only received vouchers."""
+    if r.status != "received":
+        raise EditError("التعديل للسند المستلم بس")
+    n = 0
+    for line in r.lines:
+        if line.id not in changes:
+            continue
+        mode = line.received_mode or line.mode
+        q = d3(changes[line.id])
+        _whole_ok(line.product, mode, q)
+        old = line.received or Decimal(0)
+        if q == old and line.received is not None:
+            continue
+        delta = line.product.to_base(q, mode) - line.product.to_base(old, mode)
+        move_stock(db, line.product, delta, "edit", ref=f"R-{r.id}", employee_id=user_id, note=reason)
+        line.received, line.received_mode = q, mode
+        n += 1
+    if n:
+        bump(db, r)
+    return n
+
+
+def correct_count(db: Session, c: CountSession, changes: dict, user_id: int, reason: str) -> int:
+    """changes: {line_id: counted}. An approved count moves stock by the correction; a submitted one does not yet."""
+    if c.status == "rejected":
+        raise EditError("الجرد ده مرفوض. مفيش حاجة تتعدل فيه")
+    n = 0
+    for line in c.lines:
+        if line.id not in changes:
+            continue
+        q = d3(changes[line.id])
+        _whole_ok(line.product, "piece", q)
+        if q == line.counted:
+            continue
+        if c.status == "approved":
+            move_stock(db, line.product, q - line.counted, "edit", ref=f"C-{str(c.id)[:8]}", employee_id=user_id, note=reason)
+        line.counted = q
+        n += 1
+    return n
+
+
+def audit_for(db: Session, table: str, row_id, lines_table: str, line_ids) -> list[AuditLog]:
+    ids = [str(i) for i in line_ids]
+    cond = (AuditLog.table_name == table) & (AuditLog.row_id == str(row_id))
+    if ids:
+        cond = or_(cond, (AuditLog.table_name == lines_table) & AuditLog.row_id.in_(ids))
+    return db.scalars(select(AuditLog).where(cond).order_by(AuditLog.at.desc(), AuditLog.id.desc())).all()
+
+
+def actor_names(db: Session, entries) -> dict:
+    emp = {int(a[4:]) for a in {e.actor for e in entries} if a and a.startswith("emp:")}
+    dev = {int(a[4:]) for a in {e.actor for e in entries} if a and a.startswith("dev:")}
+    names = {f"emp:{e.id}": e.name for e in db.scalars(select(Employee).where(Employee.id.in_(emp)))} if emp else {}
+    if dev:
+        names.update({f"dev:{d.id}": f"جهاز {d.name}" for d in db.scalars(select(Device).where(Device.id.in_(dev)))})
+    return names
