@@ -1,12 +1,17 @@
 {% extends "base.html" %}{% block title %}الجرد{% endblock %}
 {% block content %}
 <h1>الجرد</h1>
-<p class="muted">الجرد اللي بيتعمل على الأجهزة بيوصل هنا. الأرصدة ما بتتغيرش غير لما تعتمده.</p>
+<p class="muted">كل جرد بيتعمل على جهاز بيوصل هنا بتاريخه ورقم اللجنة. اللجان اللي في نفس التاريخ هي جرد واحد: لو أكتر من لجنة عدّت نفس الصنف، الكميات بتتجمع. الأرصدة ما بتتغيرش غير لما تعتمد.</p>
 <div class="tabs">{% for k, l in [("submitted", "بانتظار الاعتماد"), ("approved", "معتمد"), ("rejected", "مرفوض"), ("all", "الكل")] %}<a href="?status={{ k }}" class="{{ 'on' if status == k }}">{{ l }}</a>{% endfor %}</div>
-<div class="table-wrap"><table><tr><th>التاريخ</th><th>الموظف</th><th>الجهاز</th><th>الأصناف</th><th>فيها فرق</th><th>الحالة</th></tr>
+{% for day, items in days.items() %}
+<div class="bar" style="margin-top:14px"><h2 style="margin:0">{% if day %}جرد يوم {{ day }}{% else %}بدون تاريخ{% endif %} <span class="muted" style="font-size:15px">· {{ items|length }} لجنة</span></h2>
+  {% if day %}<a class="btn light" href="/counts/day/{{ day }}">الجرد كله مع بعض{% if items|selectattr('status', 'eq', 'submitted')|list|length > 1 %} واعتماده{% endif %}</a>{% endif %}</div>
+<div class="table-wrap"><table><tr><th class="num">م</th><th>رقم الجرد</th><th>اللجنة</th><th>الموظف</th><th>الجهاز</th><th>خلص</th><th class="num">الأصناف</th><th>فيها فرق</th><th>الحالة</th></tr>
 {% for c in items %}{% set diffs = c.lines|rejectattr("diff", "eq", 0)|list %}
-<tr><td><a href="/counts/{{ c.id }}">{{ c.finished_at|dt }}</a></td><td>{{ c.employee.name if c.employee else '—' }}</td><td>{{ c.device.name }}</td><td>{{ c.lines|length }}</td>
+<tr><td class="num">{{ loop.index }}</td><td><a href="/counts/{{ c.id }}">جرد {{ c.no }}</a>{% if c.device_no %} <small class="muted">(جهاز #{{ c.device_no }})</small>{% endif %}</td>
+<td>{{ c.committee or '—' }}</td><td>{{ c.employee.name if c.employee else '—' }}</td><td>{{ c.device.name }}</td><td>{{ c.finished_at|dt }}</td><td class="num">{{ c.lines|length }}</td>
 <td>{% if diffs %}<span class="pill p-red">{{ diffs|length }}</span>{% else %}<span class="pill p-ok">0</span>{% endif %}</td>
 <td>{% if c.status == 'submitted' %}<span class="pill p-warn">بانتظار الاعتماد</span>{% elif c.status == 'approved' %}<span class="pill p-ok">معتمد</span>{% else %}<span class="pill p-gray">مرفوض</span>{% endif %}</td></tr>
-{% else %}<tr><td colspan="6" class="muted">لا يوجد</td></tr>{% endfor %}</table></div>
+{% endfor %}</table></div>
+{% else %}<p class="muted">لا يوجد</p>{% endfor %}
 {% endblock %}

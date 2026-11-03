@@ -1,9 +1,9 @@
 {% extends "base.html" %}{% block title %}فاتورة{% endblock %}
 {% block content %}
-<div class="bar"><h1>فاتورة {{ s.created_at|dt }}</h1>{% if user.can('accounting') %}<a class="btn light no-print" href="/accounting/sales/{{ s.id }}">تعديل (المحاسبة)</a>{% endif %}<button class="btn light no-print" onclick="print()">طباعة</button><a class="btn light no-print" href="/sales">رجوع</a></div>
-<p class="muted">الموظف: {{ s.employee.name if s.employee else '—' }} · الجهاز: {{ s.device.name }} · رقم: <span dir="ltr">{{ s.id }}</span></p>
-<div class="table-wrap"><table><tr><th>الصنف</th><th>الكمية</th><th class="num">السعر</th><th class="num">الإجمالي</th></tr>
-{% for l in s.lines %}<tr><td>{{ l.product.name }}</td><td>{{ l.qty|qty(l.product.unit) }} {{ MODES[l.mode] }}</td><td class="num">{{ l.unit_price|money }}</td><td class="num">{{ l.total|money }}</td></tr>{% endfor %}
-<tr><th colspan="3">الإجمالي</th><th class="num">{{ s.total|money }} د.ك</th></tr></table></div>
+<div class="bar"><h1>فاتورة رقم {{ s.no }}</h1>{% if user.can('accounting') %}<a class="btn light no-print" href="/accounting/sales/{{ s.id }}">تعديل (المحاسبة)</a>{% endif %}<button class="btn light no-print" onclick="print()">طباعة</button><a class="btn light no-print" href="/sales">رجوع</a></div>
+<p class="muted">{{ s.created_at|dt }} · الموظف: {{ s.employee.name if s.employee else '—' }} · الجهاز: {{ s.device.name }}{% if s.device_no %} (فاتورة #{{ s.device_no }} على الجهاز){% endif %} · <span dir="ltr" style="font-size:12px">{{ s.id }}</span></p>
+<div class="table-wrap"><table><tr><th class="num">م</th><th>الصنف</th><th>الكمية</th><th class="num">السعر</th><th class="num">الإجمالي</th></tr>
+{% for l in s.lines %}<tr><td class="num">{{ loop.index }}</td><td>{{ l.product.name }}</td><td>{{ l.qty|qty(l.product.unit) }} {{ MODES[l.mode] }}</td><td class="num">{{ l.unit_price|money }}</td><td class="num">{{ l.total|money }}</td></tr>{% endfor %}
+<tr><th colspan="4">الإجمالي</th><th class="num">{{ s.total|money }} د.ك</th></tr></table></div>
 <div class="no-print">{% include "_audit.html" %}</div>
 {% endblock %}

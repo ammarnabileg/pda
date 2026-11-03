@@ -1,0 +1,1 @@
+{% macro price_cell(pair, pct=None) %}{% set o, n = pair %}{% if n is none and o is none %}<span class="muted">—</span>{% elif o is none %}{{ n|money }}{% else %}<span dir="ltr">{{ o|money }} → <b>{{ n|money }}</b></span>{% if pct is not none %} <span class="pill {{ 'p-red' if pct > 0 else 'p-ok' }}" dir="ltr">{{ '%+.1f'|format(pct) }}%</span>{% endif %}{% endif %}{% endmacro %}

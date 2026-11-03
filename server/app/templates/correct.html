@@ -13,8 +13,8 @@
   <br><b>كل تعديل بيتسجل باسمك ووقته وسببه، والقيمة القديمة والجديدة، ومايتمسحش.</b>
 </div>
 <form method="post" class="card">
-  <div class="table-wrap" style="max-height:none"><table><thead><tr><th>الصنف</th>{% for _, label, _ in rows[0].fields if rows %}<th>{{ label }}</th>{% endfor %}</tr></thead>
-  {% for r in rows %}<tr><td>{{ r.name }}</td>
+  <div class="table-wrap" style="max-height:none"><table><thead><tr><th class="num">م</th><th>الصنف</th>{% for _, label, _ in rows[0].fields if rows %}<th>{{ label }}</th>{% endfor %}</tr></thead>
+  {% for r in rows %}<tr><td class="num">{{ loop.index }}</td><td>{{ r.name }}</td>
     {% for name, label, value in r.fields %}<td><input name="{{ name }}_{{ r.id }}" value="{{ value }}" inputmode="decimal" dir="ltr" style="max-width:120px" aria-label="{{ label }} {{ r.name }}"> {% if name == 'q' %}{{ r.unit }}{% else %}د.ك{% endif %}</td>{% endfor %}
   </tr>{% endfor %}
   </table></div>

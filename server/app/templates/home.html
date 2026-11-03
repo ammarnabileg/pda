@@ -37,9 +37,9 @@
   </div>
   {% if user.can('sales') %}<div>
     <h2>آخر الفواتير</h2>
-    <div class="table-wrap"><table><thead><tr><th>الوقت</th><th>الموظف</th><th class="num">المبلغ</th></tr></thead>
-    {% for s in recent %}<tr><td><a href="/sales/{{ s.id }}">{{ s.created_at|dt }}</a></td><td>{{ s.employee.name if s.employee else '—' }}</td><td class="num">{{ s.total|money }}</td></tr>
-    {% else %}<tr><td colspan="3" class="muted">لا توجد فواتير بعد</td></tr>{% endfor %}
+    <div class="table-wrap"><table><thead><tr><th>الفاتورة</th><th>الوقت</th><th>الموظف</th><th class="num">المبلغ</th></tr></thead>
+    {% for s in recent %}<tr><td><a href="/sales/{{ s.id }}">{{ s.no }}</a></td><td>{{ s.created_at|dt }}</td><td>{{ s.employee.name if s.employee else '—' }}</td><td class="num">{{ s.total|money }}</td></tr>
+    {% else %}<tr><td colspan="4" class="muted">لا توجد فواتير بعد</td></tr>{% endfor %}
     </table></div>
   </div>{% endif %}
 </div>

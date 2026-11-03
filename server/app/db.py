@@ -29,10 +29,14 @@ def init_db():
 
     with engine.begin() as conn:
         conn.execute(text("CREATE SEQUENCE IF NOT EXISTS sync_version"))
+        conn.execute(text("CREATE SEQUENCE IF NOT EXISTS sale_no"))
+        conn.execute(text("CREATE SEQUENCE IF NOT EXISTS count_no"))
         first_audit = conn.execute(text("SELECT to_regclass('audit_log') IS NULL")).scalar_one()
     Base.metadata.create_all(engine)
     # Columns added after the first release. create_all does not alter existing tables.
     with engine.begin() as conn:
+        conn.execute(text("SELECT set_config('tamween.actor', 'system', true), "
+                          "set_config('tamween.reason', 'ترقية قاعدة البيانات', true)"))
         for sql in UPGRADES:
             conn.execute(text(sql))
         for sql in KEEP_FOREVER:
@@ -68,7 +72,52 @@ UPGRADES = [
     "CREATE UNIQUE INDEX IF NOT EXISTS receipts_client_id ON receipts (client_id)",
     "ALTER TABLE receipts ADD COLUMN IF NOT EXISTS approved_by INTEGER REFERENCES employees(id)",
     "ALTER TABLE receipts ADD COLUMN IF NOT EXISTS approved_at TIMESTAMPTZ",
-    "ALTER TABLE IF EXISTS audit_log ALTER COLUMN action TYPE VARCHAR(20)",
+    """DO $$ BEGIN
+         IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'audit_log' AND column_name = 'action'
+                    AND character_maximum_length < 20) THEN
+           ALTER TABLE audit_log ALTER COLUMN action TYPE VARCHAR(20);
+         END IF;
+       END $$""",
+    "ALTER TABLE sales ADD COLUMN IF NOT EXISTS device_no INTEGER",
+    "ALTER TABLE count_sessions ADD COLUMN IF NOT EXISTS device_no INTEGER",
+    "ALTER TABLE count_sessions ADD COLUMN IF NOT EXISTS count_date DATE",
+    "ALTER TABLE count_sessions ADD COLUMN IF NOT EXISTS committee VARCHAR(20)",
+    "CREATE INDEX IF NOT EXISTS ix_count_sessions_count_date ON count_sessions (count_date)",
+    *[stmt for table, seq, order in (("sales", "sale_no", "created_at, synced_at"),
+                                     ("count_sessions", "count_no", "synced_at"))
+      for stmt in (
+        f"ALTER TABLE {table} ADD COLUMN IF NOT EXISTS no BIGINT",
+        # Number records from before serial numbers existed, oldest first, once. The audit trigger is paused
+        # for this one update (one log line per old invoice would bury the log); a single entry records it.
+        f"""DO $$ DECLARE c bigint; BEGIN
+              SELECT COUNT(*) INTO c FROM {table} WHERE no IS NULL;
+              IF c > 0 THEN
+                ALTER TABLE {table} DISABLE TRIGGER USER;
+                UPDATE {table} t SET no = x.n FROM (
+                  SELECT id, (SELECT COALESCE(MAX(no), 0) FROM {table}) + row_number() OVER (ORDER BY {order}) AS n
+                  FROM {table} WHERE no IS NULL) x WHERE t.id = x.id;
+                ALTER TABLE {table} ENABLE TRIGGER USER;
+                IF to_regclass('audit_log') IS NOT NULL THEN
+                  INSERT INTO audit_log (at, actor, reason, table_name, row_id, action, changes)
+                  VALUES (clock_timestamp(), 'system', 'ترقية قاعدة البيانات', 'app', 'numbered', 'numbered',
+                          jsonb_build_object('{table}', jsonb_build_array(NULL, c)));
+                END IF;
+              END IF;
+            END $$""",
+        # Move the sequence forward past existing numbers, never backwards.
+        f"""SELECT setval('{seq}', m) FROM (SELECT MAX(no) AS m FROM {table}) x, {seq} s
+            WHERE x.m IS NOT NULL AND x.m > CASE WHEN s.is_called THEN s.last_value ELSE s.last_value - 1 END""",
+        # Only when not done yet: these lock the table, and SET NOT NULL reads every row.
+        f"""DO $$ BEGIN
+              IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = '{table}' AND column_name = 'no'
+                         AND (is_nullable = 'YES' OR column_default IS NULL)) THEN
+                ALTER TABLE {table} ALTER COLUMN no SET DEFAULT nextval('{seq}');
+                ALTER TABLE {table} ALTER COLUMN no SET NOT NULL;
+              END IF;
+            END $$""",
+        f"CREATE UNIQUE INDEX IF NOT EXISTS {table}_no ON {table} (no)",
+      )],
+    "UPDATE count_sessions SET count_date = (finished_at AT TIME ZONE 'Asia/Kuwait')::date WHERE count_date IS NULL",
 ]
 
 

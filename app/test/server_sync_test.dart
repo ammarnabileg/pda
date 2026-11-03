@@ -61,6 +61,9 @@ void main() {
         'id': countId,
         'employee_id': ahmad.id,
         'finished_at': DateTime.now().toUtc().toIso8601String(),
+        'count_date': DateTime.now().toIso8601String().substring(0, 10),
+        'committee': '1',
+        'device_no': 1,
         'lines': [
           {'product_id': rice.id, 'counted': '40.000'},
         ],

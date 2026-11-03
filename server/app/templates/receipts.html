@@ -3,12 +3,12 @@
 <div class="bar"><h1>استلام الموردين</h1><a class="btn" href="/receipts/new">+ سند استلام جديد</a></div>
 {% if pending and status != 'pending' %}<div class="alert error"><a href="?status=pending">{{ pending }} سند اتعمل على الأجهزة مستني موافقتك — الأرصدة مش هتزيد قبل الموافقة</a></div>{% endif %}
 <div class="tabs">{% for k, l in [("open", "بانتظار الاستلام"), ("pending", "مستني الموافقة (" ~ pending ~ ")"), ("received", "تم الاستلام"), ("rejected", "مرفوض"), ("cancelled", "ملغي"), ("all", "الكل")] %}<a href="?status={{ k }}" class="{{ 'on' if status == k }}">{{ l }}</a>{% endfor %}</div>
-<div class="table-wrap"><table><tr><th>رقم</th><th>المورد</th><th>الأصناف</th><th>أُنشئ</th><th>الحالة</th><th>الفروقات</th></tr>
+<div class="table-wrap"><table><tr><th class="num">م</th><th>رقم السند</th><th>المورد</th><th>الأصناف</th><th>أُنشئ</th><th>الحالة</th><th>الفروقات</th></tr>
 {% for r in items %}
 {% set diffs = r.lines|selectattr("diff_base")|list %}
-<tr><td><a href="/receipts/{{ r.id }}">{{ r.id }}</a></td><td>{{ r.supplier.name }}</td><td>{{ r.lines|length }}</td><td>{{ r.created_at|dt }}</td>
+<tr><td class="num">{{ loop.index }}</td><td><a href="/receipts/{{ r.id }}">سند {{ r.id }}</a></td><td>{{ r.supplier.name }}</td><td>{{ r.lines|length }}</td><td>{{ r.created_at|dt }}</td>
 <td>{% if r.status == 'open' %}<span class="pill p-warn">بانتظار الاستلام</span>{% elif r.status == 'pending' %}<span class="pill p-red">⚠ مستني موافقتك</span>{% elif r.status == 'received' %}<span class="pill p-ok">تم الاستلام</span>{% elif r.status == 'rejected' %}<span class="pill p-gray">مرفوض</span>{% else %}<span class="pill p-gray">ملغي</span>{% endif %}{% if r.client_id %} <span class="pill p-info">من الجهاز</span>{% endif %}</td>
 <td>{% if r.status == 'received' %}{% if diffs %}<span class="pill p-red">{{ diffs|length }} صنف</span>{% else %}<span class="pill p-ok">مطابق</span>{% endif %}{% endif %}</td></tr>
-{% else %}<tr><td colspan="6" class="muted">لا توجد سندات</td></tr>{% endfor %}
+{% else %}<tr><td colspan="7" class="muted">لا توجد سندات</td></tr>{% endfor %}
 </table></div>
 {% endblock %}

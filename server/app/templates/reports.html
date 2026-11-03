@@ -16,17 +16,17 @@
 </div>
 <p class="hint">التكلفة محسوبة بسعر الشراء المسجل للصنف وقت البيع.</p>
 <h2>حسب اليوم</h2>
-<div class="table-wrap"><table><tr><th>اليوم</th><th class="num">الفواتير</th><th class="num">المبيعات</th><th class="num">الربح</th></tr>
-{% for d in days %}<tr><td><a href="/sales?d_from={{ d[0] }}&d_to={{ d[0] }}">{{ d[0] }}</a></td><td class="num">{{ d[1] }}</td><td class="num">{{ d[2]|money }}</td><td class="num">{{ ((d[2] or 0) - (d[3] or 0))|money }}</td></tr>
-{% else %}<tr><td colspan="4" class="muted">لا توجد مبيعات</td></tr>{% endfor %}</table></div>
+<div class="table-wrap"><table><tr><th class="num">م</th><th>اليوم</th><th class="num">الفواتير</th><th class="num">المبيعات</th><th class="num">الربح</th></tr>
+{% for d in days %}<tr><td class="num">{{ loop.index }}</td><td><a href="/sales?d_from={{ d[0] }}&d_to={{ d[0] }}">{{ d[0] }}</a></td><td class="num">{{ d[1] }}</td><td class="num">{{ d[2]|money }}</td><td class="num">{{ ((d[2] or 0) - (d[3] or 0))|money }}</td></tr>
+{% else %}<tr><td colspan="5" class="muted">لا توجد مبيعات</td></tr>{% endfor %}</table></div>
 <div class="grid" style="align-items:start">
 <div><h2>الأكثر مبيعاً</h2>
-<div class="table-wrap"><table><tr><th>الصنف</th><th class="num">الكمية</th><th class="num">المبيعات</th></tr>
-{% for p, q, t in top %}<tr><td><a href="/products/{{ p.id }}">{{ p.name }}</a></td><td>{{ q|qty(p.unit) }} {{ UNITS[p.unit] }}</td><td class="num">{{ t|money }}</td></tr>
-{% else %}<tr><td colspan="3" class="muted">—</td></tr>{% endfor %}</table></div></div>
+<div class="table-wrap"><table><tr><th class="num">م</th><th>الصنف</th><th class="num">الكمية</th><th class="num">المبيعات</th></tr>
+{% for p, q, t in top %}<tr><td class="num">{{ loop.index }}</td><td><a href="/products/{{ p.id }}">{{ p.name }}</a></td><td>{{ q|qty(p.unit) }} {{ UNITS[p.unit] }}</td><td class="num">{{ t|money }}</td></tr>
+{% else %}<tr><td colspan="4" class="muted">—</td></tr>{% endfor %}</table></div></div>
 <div><h2>حسب الموظف</h2>
-<div class="table-wrap"><table><tr><th>الموظف</th><th class="num">الفواتير</th><th class="num">المبيعات</th></tr>
-{% for n, c, t in by_emp %}<tr><td>{{ n or '—' }}</td><td class="num">{{ c }}</td><td class="num">{{ t|money }}</td></tr>
-{% else %}<tr><td colspan="3" class="muted">—</td></tr>{% endfor %}</table></div></div>
+<div class="table-wrap"><table><tr><th class="num">م</th><th>الموظف</th><th class="num">الفواتير</th><th class="num">المبيعات</th></tr>
+{% for n, c, t in by_emp %}<tr><td class="num">{{ loop.index }}</td><td>{{ n or '—' }}</td><td class="num">{{ c }}</td><td class="num">{{ t|money }}</td></tr>
+{% else %}<tr><td colspan="4" class="muted">—</td></tr>{% endfor %}</table></div></div>
 </div>
 {% endblock %}

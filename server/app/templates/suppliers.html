@@ -6,11 +6,11 @@
   <div style="flex:1;min-width:150px"><label>التليفون</label><input name="phone" dir="ltr"></div>
   <button class="btn" style="align-self:end">+ إضافة مورد</button>
 </form>
-<div class="table-wrap"><table><tr><th>المورد</th><th>التليفون</th><th>الحالة</th><th></th></tr>
+<div class="table-wrap"><table><tr><th class="num">م</th><th>المورد</th><th>التليفون</th><th>الحالة</th><th></th></tr>
 {% for s in items %}
-<tr><td><input name="name" value="{{ s.name }}" required form="s{{ s.id }}"></td><td><input name="phone" value="{{ s.phone or '' }}" dir="ltr" form="s{{ s.id }}"></td>
+<tr><td class="num">{{ loop.index }}</td><td><input name="name" value="{{ s.name }}" required form="s{{ s.id }}"></td><td><input name="phone" value="{{ s.phone or '' }}" dir="ltr" form="s{{ s.id }}"></td>
 <td><select name="active" form="s{{ s.id }}"><option value="1" {{ 'selected' if s.active }}>فعّال</option><option value="0" {{ 'selected' if not s.active }}>موقوف</option></select></td>
 <td><form method="post" action="/suppliers" id="s{{ s.id }}"><input type="hidden" name="id" value="{{ s.id }}"><button class="btn small light">حفظ</button></form></td></tr>
-{% else %}<tr><td colspan="4" class="muted">لا يوجد موردين بعد</td></tr>{% endfor %}
+{% else %}<tr><td colspan="5" class="muted">لا يوجد موردين بعد</td></tr>{% endfor %}
 </table></div>
 {% endblock %}

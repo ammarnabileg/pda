@@ -1,5 +1,7 @@
 """Business rules shared by the device API and the dashboard."""
-from datetime import datetime, timedelta, timezone
+import os
+from datetime import date, datetime, timedelta, timezone
+from zoneinfo import ZoneInfo
 from decimal import ROUND_HALF_UP, Decimal
 
 from sqlalchemy import or_, select, text, update
@@ -128,6 +130,24 @@ def _parse_time(value):
     return t if t.tzinfo else t.replace(tzinfo=timezone.utc)
 
 
+LOCAL_TZ = ZoneInfo(os.environ.get("TZ_NAME", "Asia/Kuwait"))
+
+
+def _small_int(value):
+    try:
+        v = int(value)
+    except (TypeError, ValueError):
+        return None
+    return v if 0 < v < 2_000_000_000 else None
+
+
+def _parse_date(value):
+    try:
+        return date.fromisoformat(str(value)[:10]) if value else None
+    except ValueError:
+        return None
+
+
 def _employee_id(db, value):
     if value is None:
         return None
@@ -154,7 +174,7 @@ def push_sale(db: Session, device: Device, data: dict):
     if not lines:
         raise SyncError("empty_sale")
     emp = _employee_id(db, data.get("employee_id"))
-    sale = Sale(id=data["id"], device_id=device.id, employee_id=emp,
+    sale = Sale(id=data["id"], device_id=device.id, employee_id=emp, device_no=_small_int(data.get("device_no")),
                 created_at=_parse_time(data.get("created_at")), total=0)
     stock = []
     for ln in lines:
@@ -180,10 +200,14 @@ def push_count(db: Session, device: Device, data: dict):
     lines = data.get("lines") or []
     if not lines:
         raise SyncError("empty_count")
+    finished = _parse_time(data.get("finished_at"))
+    committee = str(data.get("committee") or "").strip()[:20] or None
     s = CountSession(id=data["id"], device_id=device.id,
                      employee_id=_employee_id(db, data.get("employee_id")),
                      started_at=_parse_time(data.get("started_at")),
-                     finished_at=_parse_time(data.get("finished_at")))
+                     finished_at=finished, device_no=_small_int(data.get("device_no")),
+                     count_date=_parse_date(data.get("count_date")) or finished.astimezone(LOCAL_TZ).date(),
+                     committee=committee)
     db.add(s)
     for ln in lines:
         p = _product(db, ln["product_id"])
@@ -418,3 +442,72 @@ def actor_names(db: Session, entries) -> dict:
     if dev:
         names.update({f"dev:{d.id}": f"جهاز {d.name}" for d in db.scalars(select(Device).where(Device.id.in_(dev)))})
     return names
+
+
+# ---------- Stocktake by date: several committees (devices) counting on the same day ----------
+
+def count_day(db: Session, day, statuses=("submitted", "approved")):
+    """Per product, every committee's line for that date. Counts of the same product on the same day add up."""
+    sessions = db.scalars(select(CountSession).where(CountSession.count_date == day, CountSession.status.in_(statuses))
+                          .order_by(CountSession.committee, CountSession.no)).all()
+    products = {}
+    for s in sessions:
+        for line in s.lines:
+            products.setdefault(line.product_id, []).append((s, line))
+    return sessions, products
+
+
+def overlaps(db: Session, session: CountSession):
+    """Other committees of the same day that counted any of this session's products."""
+    if session.count_date is None:
+        return []
+    mine = {l.product_id for l in session.lines}
+    others = db.scalars(select(CountSession).where(CountSession.count_date == session.count_date,
+                                                   CountSession.id != session.id,
+                                                   CountSession.status.in_(("submitted", "approved")))).all()
+    return [o for o in others if mine & {l.product_id for l in o.lines}]
+
+
+def approve_count_day(db: Session, day, reviewer_id: int) -> int:
+    """Approve every waiting committee of a day at once. For each product the counted quantities are added up,
+    and stock moves by (total counted - stock when the last of those counts reached the server)."""
+    sessions, products = count_day(db, day, ("submitted",))
+    if not sessions:
+        raise EditError("مفيش لجان مستنية الاعتماد في اليوم ده")
+    approved = db.scalars(select(CountSession).where(CountSession.count_date == day,
+                                                     CountSession.status == "approved")).all()
+    done = {l.product_id: s for s in approved for l in s.lines}
+    clash = [pid for pid in products if pid in done]
+    if clash:
+        p = db.get(Product, clash[0])
+        raise EditError(f"{p.name} اتعتمد قبل كده في جرد رقم {done[clash[0]].no}. صلّحه من «تعديل (المحاسبة)» بدل ما يتعد مرتين")
+    for pid, items in products.items():
+        total = sum((line.counted for _, line in items), Decimal(0))
+        last = max(items, key=lambda x: x[0].synced_at)[1]
+        move_stock(db, last.product, total - last.stock_at_sync, "count", ref=f"D-{day.isoformat()}",
+                   employee_id=reviewer_id)
+    t = now()
+    for s in sessions:
+        s.status, s.reviewed_by, s.reviewed_at = "approved", reviewer_id, t
+    return len(sessions)
+
+
+# ---------- Price history, from the audit log ----------
+
+def price_history(db: Session, product_id: int | None = None, start=None, end=None, limit: int = 500):
+    """Every sale-price or purchase-price change (and the first price when a product was added), newest first."""
+    q = select(AuditLog).where(AuditLog.table_name == "products", AuditLog.action.in_(("INSERT", "UPDATE")),
+                               or_(AuditLog.changes.has_key("price"), AuditLog.changes.has_key("cost")))
+    if product_id is not None:
+        q = q.where(AuditLog.row_id == str(product_id))
+    if start is not None:
+        q = q.where(AuditLog.at >= start, AuditLog.at < end)
+    out = []
+    for e in db.scalars(q.order_by(AuditLog.at.desc(), AuditLog.id.desc()).limit(limit)):
+        def pair(k):
+            v = e.changes.get(k)
+            return (None, None) if v is None else (None if v[0] is None else Decimal(str(v[0])),
+                                                   None if v[1] is None else Decimal(str(v[1])))
+        out.append({"e": e, "product_id": int(e.row_id), "price": pair("price"), "cost": pair("cost")})
+    return out
+

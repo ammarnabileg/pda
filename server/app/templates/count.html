@@ -1,12 +1,13 @@
 {% extends "base.html" %}{% block title %}جرد{% endblock %}
 {% block content %}
 {% from "_macros.html" import icon %}
-<div class="bar"><h1>جرد {{ c.employee.name if c.employee else '' }}</h1>
+<div class="bar"><h1>جرد رقم {{ c.no }}{% if c.committee %} · لجنة {{ c.committee }}{% endif %}</h1>
   {% if c.status == 'submitted' %}<span class="pill p-warn">{{ icon('warn') }} مستني المراجعة</span>{% elif c.status == 'approved' %}<span class="pill p-ok">{{ icon('ok') }} معتمد</span>{% else %}<span class="pill p-gray">مرفوض</span>{% endif %}
   {% if c.status != 'rejected' and user.can('accounting') %}<a class="btn light no-print" href="/accounting/counts/{{ c.id }}">تعديل (المحاسبة)</a>{% endif %}
   <button class="btn light no-print" onclick="print()">طباعة</button><a class="btn light no-print" href="/counts">رجوع</a></div>
 <div class="card grid">
-  <div><small class="muted">الموظف · الجهاز</small><br><b>{{ c.employee.name if c.employee else '—' }}</b> · {{ c.device.name }}</div>
+  <div><small class="muted">تاريخ الجرد · اللجنة</small><br><b>{% if c.count_date %}<a href="/counts/day/{{ c.count_date }}">{{ c.count_date }}</a>{% else %}—{% endif %}</b> · لجنة {{ c.committee or '—' }}</div>
+  <div><small class="muted">الموظف · الجهاز</small><br><b>{{ c.employee.name if c.employee else '—' }}</b> · {{ c.device.name }}{% if c.device_no %} <span class="muted">(جرد #{{ c.device_no }} على الجهاز)</span>{% endif %}</div>
   <div><small class="muted">اتعد على الجهاز</small><br><b>{{ c.finished_at|dt }}</b></div>
   <div><small class="muted">وصل للسيرفر</small><br><b>{{ c.synced_at|dt }}</b></div>
   {% if c.status != 'submitted' %}<div><small class="muted">راجعه</small><br><b>{{ c.reviewer.name if c.reviewer else '—' }}</b> · {{ c.reviewed_at|dt }}</div>{% endif %}
@@ -20,12 +21,14 @@
   <div class="stat"><small>قيمة الفرق بسعر الشراء</small><b class="{{ 'neg' if value < 0 else 'pos' if value > 0 else 'zero' }}">{{ value|money }}</b> د.ك</div>
 </div>
 <div class="tabs no-print"><a href="?" class="{{ 'on' if not only }}">كل الأصناف ({{ stats.all }})</a><a href="?only=diff" class="{{ 'on' if only }}">الفروق بس ({{ stats.short + stats.over }})</a></div>
-<div class="table-wrap"><table><thead><tr><th>الصنف</th><th class="num">في النظام</th><th class="num">المعدود</th><th>الفرق</th></tr></thead>
-{% for l in lines %}<tr><td>{{ l.product.name }}</td><td class="num">{{ l.stock_at_sync|qty(l.product.unit) }}</td><td class="num">{{ l.counted|qty(l.product.unit) }}</td>
+<div class="table-wrap"><table><thead><tr><th class="num">م</th><th>الصنف</th><th class="num">في النظام</th><th class="num">المعدود</th><th>الفرق</th></tr></thead>
+{% for l in lines %}<tr><td class="num">{{ loop.index }}</td><td>{{ l.product.name }}</td><td class="num">{{ l.stock_at_sync|qty(l.product.unit) }}</td><td class="num">{{ l.counted|qty(l.product.unit) }}</td>
 <td>{% if l.diff == 0 %}<span class="zero">{{ icon('ok') }} مطابق</span>{% elif l.diff < 0 %}<span class="neg">ناقص {{ base_text(l.product, -l.diff) }}</span>{% else %}<span class="pos">زيادة {{ base_text(l.product, l.diff) }}</span>{% endif %}</td></tr>
-{% else %}<tr><td colspan="4" class="muted">مفيش فروق</td></tr>{% endfor %}
+{% else %}<tr><td colspan="5" class="muted">مفيش فروق</td></tr>{% endfor %}
 </table></div>
-{% if c.status == 'submitted' %}
+{% if c.status == 'submitted' and others %}
+<div class="alert error no-print">فيه {{ others|length }} لجنة تانية في نفس اليوم عدّت أصناف من دي ({% for o in others %}لجنة {{ o.committee or '—' }}{{ '، ' if not loop.last }}{% endfor %}). اعتمد <a href="/counts/day/{{ c.count_date }}">الجرد كله مع بعض</a> علشان الكميات تتجمع.</div>
+{% elif c.status == 'submitted' %}
 <div class="card no-print">
   <p><b>الاعتماد</b> بيعدّل رصيد كل صنف فيه فرق بقيمة الفرق ({{ stats.short + stats.over }} صنف، بقيمة {{ value|money }} د.ك بسعر الشراء). أي بيع حصل بعد وصول الجرد بيتحسب صح.</p>
   <form class="inline" method="post" action="/counts/{{ c.id }}/approve" onsubmit="return confirm('اعتماد الجرد؟\n\nهيتعدّل رصيد {{ stats.short + stats.over }} صنف:\nناقص: {{ stats.short }} · زيادة: {{ stats.over }}\nقيمة الفرق: {{ value|money }} د.ك')"><button class="btn">اعتماد وتعديل الأرصدة</button></form>

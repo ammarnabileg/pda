@@ -286,8 +286,10 @@ class _SaleScreenState extends State<SaleScreen> {
     if (!ok || !mounted) return;
     final app = AppScope.read(context);
     final id = uuid4();
+    final no = await app.db.nextSerial('sales');
     await app.db.enqueue('sales', id, {
       'id': id,
+      'device_no': no,
       'employee_id': app.employee?.id,
       'created_at': DateTime.now().toUtc().toIso8601String(),
       'lines': [
@@ -299,6 +301,7 @@ class _SaleScreenState extends State<SaleScreen> {
       await app.db.adjustStock(l.productId, -products[l.productId]!.toBase(l.qty, l.mode));
     }
     await app.db.addHistory('sales', id, {
+      'no': no,
       'total': t,
       'employee': app.employee?.name,
       'lines': [
@@ -318,7 +321,7 @@ class _SaleScreenState extends State<SaleScreen> {
     if (!mounted) return;
     Navigator.of(context).pushReplacement(
       MaterialPageRoute(
-        builder: (_) => SaleDoneScreen(total: t, items: n, id: id),
+        builder: (_) => SaleDoneScreen(total: t, items: n, id: id, no: no),
       ),
     );
   }
@@ -440,9 +443,9 @@ class _SaleScreenState extends State<SaleScreen> {
 }
 
 class SaleDoneScreen extends StatelessWidget {
-  final int total, items;
+  final int total, items, no;
   final String id;
-  const SaleDoneScreen({super.key, required this.total, required this.items, required this.id});
+  const SaleDoneScreen({super.key, required this.total, required this.items, required this.id, required this.no});
 
   @override
   Widget build(BuildContext context) => WorkScaffold(
@@ -459,7 +462,7 @@ class SaleDoneScreen extends StatelessWidget {
         const SizedBox(height: S.m),
         const Text('تم تسجيل البيع', textAlign: TextAlign.center, style: T.heading),
         Text('${money(total)} ${W.currency}', textAlign: TextAlign.center, style: T.total.copyWith(fontSize: 32)),
-        Text('$items صنف · رقم ${id.substring(0, 8)}', textAlign: TextAlign.center, style: T.sub),
+        Text('فاتورة رقم $no · $items صنف', textAlign: TextAlign.center, style: T.subStrong),
         const SizedBox(height: S.m),
         Center(child: SendStatus(outboxKey: 'sales:$id')),
         const SizedBox(height: S.l),

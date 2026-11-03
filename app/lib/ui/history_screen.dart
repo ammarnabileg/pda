@@ -93,14 +93,18 @@ class _HistoryScreenState extends State<HistoryScreen> {
     final d = e.data;
     final lines = (d['lines'] as List?) ?? const [];
     final (String title, String? amount, String details) = switch (e.kind) {
-      'sales' => ('فاتورة ${e.id.substring(0, 8)}', money((d['total'] as num).toInt()), '${lines.length} صنف · ${d['employee'] ?? ''}'),
+      'sales' => ('فاتورة ${saleNo(e)}', money((d['total'] as num).toInt()), '${lines.length} صنف · ${d['employee'] ?? ''}'),
       'new_receipts' => ('${d['supplier']} · من غير سند', null, '${lines.length} صنف · مستني موافقة المشرف'),
       'receipts' => (
         '${d['supplier']} · سند ${e.id}',
         null,
         '${lines.length} صنف · ${(d['diffs'] as num? ?? 0) == 0 ? 'كله مطابق' : 'فروقات في ${d['diffs']} صنف'}',
       ),
-      _ => ('جرد ${lines.length} صنف', null, '${d['employee'] ?? ''}'),
+      _ => (
+        '${d['no'] != null ? 'جرد رقم ${d['no']}' : 'جرد'}${d['committee'] != null ? ' · لجنة ${d['committee']}' : ''}',
+        null,
+        '${lines.length} صنف${d['count_date'] != null ? ' · ${d['count_date']}' : ''} · ${d['employee'] ?? ''}',
+      ),
     };
     return ItemRow(
       title: title,
@@ -153,10 +157,10 @@ class _HistoryDetail extends StatelessWidget {
     final d = entry.data;
     final lines = ((d['lines'] as List?) ?? const []).cast<Map<String, dynamic>>();
     final title = switch (entry.kind) {
-      'sales' => 'فاتورة ${entry.id.substring(0, 8)}',
+      'sales' => 'فاتورة ${saleNo(entry)}',
       'receipts' => 'سند ${entry.id}',
       'new_receipts' => 'استلام من غير سند',
-      _ => 'جرد',
+      _ => d['committee'] != null ? 'جرد · لجنة ${d['committee']}' : 'جرد',
     };
     return WorkScaffold(
       title: title,
@@ -253,3 +257,6 @@ String? _approvedQty(Map? d, Map l) {
   }
   return null;
 }
+
+/// The device's running number for sales made after numbering existed; older ones show the start of their id.
+String saleNo(HistoryEntry e) => e.data['no'] != null ? 'رقم ${e.data['no']}' : e.id.substring(0, 8);

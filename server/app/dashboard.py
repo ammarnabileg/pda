@@ -13,7 +13,7 @@ from zoneinfo import ZoneInfo
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import HTMLResponse, RedirectResponse, Response, StreamingResponse
 from fastapi.templating import Jinja2Templates
-from sqlalchemy import Date, case, cast, func, or_, select
+from sqlalchemy import Date, String, case, cast, func, or_, select
 from sqlalchemy.orm import Session
 
 from . import config, services
@@ -255,7 +255,7 @@ def products(request: Request, q: str = "", status: str = "active", low: int = 0
     items = db.scalars(stmt.order_by(Product.name).offset((page - 1) * PAGE_SIZE).limit(PAGE_SIZE)).all()
     params = {"q": q, "status": status, "low": low or "", "unit": unit}
     return render(request, "products.html", {
-        "items": items, "total": total, "page": page, "pages": pages, **params,
+        "items": items, "total": total, "page": page, "pages": pages, **params, "offset": (page - 1) * PAGE_SIZE,
         "page_url": lambda n: "/products?" + urlencode({**{k: v for k, v in params.items() if v}, "page": n}),
         "filtered": bool(q.strip() or low or unit or status != "active"),
     })
@@ -375,7 +375,10 @@ def product_detail(pid: int, request: Request, user=Depends(need["products"]), d
     if not p:
         return redirect("/products")
     moves = db.scalars(select(StockMove).where(StockMove.product_id == pid).order_by(StockMove.created_at.desc()).limit(50)).all()
-    return render(request, "product_form.html", form_ctx(p, None, moves=moves,
+    sale_refs = {m.ref for m in moves if m.ref and len(m.ref) == 36}
+    sale_nos = dict(db.execute(select(cast(Sale.id, String), Sale.no).where(cast(Sale.id, String).in_(sale_refs))).all()) if sale_refs else {}
+    return render(request, "product_form.html", form_ctx(p, None, moves=moves, sale_nos=sale_nos,
+                  prices=_price_rows(db, services.price_history(db, p.id, limit=50)),
                   **history(db, "products", p.id, "product_barcodes", [b.id for b in p.extra_barcodes])))
 
 
@@ -732,10 +735,51 @@ def reports(request: Request, d_from: str = "", d_to: str = "", user=Depends(nee
 
 @router.get("/counts", response_class=HTMLResponse)
 def counts(request: Request, status: str = "submitted", user=Depends(need["counts"]), db: Session = Depends(get_db)):
-    stmt = select(CountSession).order_by(CountSession.finished_at.desc()).limit(200)
+    stmt = select(CountSession).order_by(CountSession.count_date.desc().nulls_last(), CountSession.committee,
+                                         CountSession.no.desc()).limit(300)
     if status in ("submitted", "approved", "rejected"):
         stmt = stmt.where(CountSession.status == status)
-    return render(request, "counts.html", {"items": db.scalars(stmt).all(), "status": status})
+    items = db.scalars(stmt).all()
+    days = {}
+    for c in items:
+        days.setdefault(c.count_date, []).append(c)
+    return render(request, "counts.html", {"days": days, "status": status, "count": len(items)})
+
+
+@router.get("/counts/day/{day}", response_class=HTMLResponse)
+def count_day_page(day: str, request: Request, user=Depends(need["counts"]), db: Session = Depends(get_db)):
+    d = parse_date(day, None)
+    if d is None:
+        return redirect("/counts")
+    sessions, products = services.count_day(db, d)
+    rows = []
+    for pid, items in products.items():
+        p = items[0][1].product
+        waiting = [(s, l) for s, l in items if s.status == "submitted"]
+        total = sum((l.counted for _, l in items), Decimal(0))
+        last = max(items, key=lambda x: x[0].synced_at)[1]
+        rows.append({"p": p, "lines": items, "total": total, "stock": last.stock_at_sync, "diff": total - last.stock_at_sync,
+                     "waiting": bool(waiting)})
+    rows.sort(key=lambda r: (r["diff"] == 0, r["p"].name))
+    value = sum((r["diff"] * r["p"].cost for r in rows if r["waiting"]), Decimal(0))
+    return render(request, "count_day.html", {"day": d, "sessions": sessions, "rows": rows, "value": value,
+                                              "waiting": [s for s in sessions if s.status == "submitted"]})
+
+
+@router.post("/counts/day/{day}/approve")
+def count_day_approve(day: str, request: Request, user=Depends(need["counts"]), db: Session = Depends(get_db)):
+    d = parse_date(day, None)
+    if d is None:
+        return redirect("/counts")
+    try:
+        n = services.approve_count_day(db, d, user.id)
+    except services.EditError as e:
+        db.rollback()
+        flash(request, str(e), "error")
+        return redirect(f"/counts/day/{d}")
+    db.commit()
+    flash(request, f"تم اعتماد {n} لجنة مع بعض وتعديل الأرصدة")
+    return redirect(f"/counts/day/{d}")
 
 
 @router.get("/counts/{cid}", response_class=HTMLResponse)
@@ -752,6 +796,7 @@ def count_detail(cid: str, request: Request, user=Depends(need["counts"]), db: S
     only = request.query_params.get("only") == "diff"
     lines = [l for l in c.lines if not only or l.diff != 0]
     return render(request, "count.html", {"c": c, "value": value, "stats": stats, "lines": lines, "only": only,
+                                          "others": services.overlaps(db, c) if c.status == "submitted" else [],
                                           **history(db, "count_sessions", c.id, "count_lines", [l.id for l in c.lines])})
 
 
@@ -760,6 +805,10 @@ def count_review(cid: str, action: str, request: Request, user=Depends(need["cou
     c = db.get(CountSession, cid)
     if not c or c.status != "submitted" or action not in ("approve", "reject"):
         return redirect("/counts")
+    if action == "approve" and services.overlaps(db, c):
+        flash(request, "فيه لجنة تانية في نفس اليوم عدّت نفس الأصناف. اعتمد الجرد كله مع بعض من صفحة اليوم، "
+                       "علشان الكميات تتجمع وماتتحسبش مرتين.", "error")
+        return redirect(f"/counts/day/{c.count_date}")
     if action == "approve":
         services.approve_count(db, c, user.id)
         flash(request, "تم اعتماد الجرد وتعديل الأرصدة")
@@ -979,6 +1028,47 @@ async def count_correct(cid: str, request: Request, user=Depends(need["accountin
     return await _correct(request, db, user, "count", c, _count_rows, services.correct_count, f"/counts/{cid}")
 
 
+def _price_rows(db, items):
+    names = services.actor_names(db, [i["e"] for i in items])
+    products = {p.id: p for p in db.scalars(select(Product).where(Product.id.in_({i["product_id"] for i in items})))} if items else {}
+    rows = []
+    for i in items:
+        e = i["e"]
+        (po, pn), (co, cn) = i["price"], i["cost"]
+        pct = (pn - po) / po * 100 if po and pn is not None else None
+        who = names.get(e.actor) or ACTOR_NAMES.get(e.actor, "من خارج اللوحة (سكربت أو SQL)" if not e.actor else e.actor)
+        rows.append({"e": e, "p": products.get(i["product_id"]), "pid": i["product_id"], "price": (po, pn), "cost": (co, cn),
+                     "pct": pct, "who": who, "new": e.action == "INSERT"})
+    return rows
+
+
+@router.get("/prices", response_class=HTMLResponse)
+def price_log(request: Request, d_from: str = "", d_to: str = "", q: str = "", user=Depends(need["products"]),
+              db: Session = Depends(get_db)):
+    today = datetime.now(TZ).date()
+    f_from, f_to = parse_date(d_from, today - timedelta(days=90)), parse_date(d_to, today)
+    start, end = local_day_range(f_from, f_to)
+    pid = None
+    if q.strip():
+        p, _ = services.find_by_code(db, q.strip())
+        p = p or db.scalar(select(Product).where(Product.name.ilike(f"%{q.strip()}%")).limit(1))
+        pid = p.id if p else -1
+    rows = _price_rows(db, services.price_history(db, pid, start, end))
+    if request.query_params.get("format") == "csv":
+        buf = io.StringIO()
+        w = csv.writer(buf)
+        w.writerow(["الوقت", "الصنف", "الباركود", "سعر البيع قبل", "سعر البيع بعد", "التغيير %", "سعر الشراء قبل",
+                    "سعر الشراء بعد", "مين", "السبب"])
+        for r in rows:
+            w.writerow([fmt_dt(r["e"].at), r["p"].name if r["p"] else r["pid"], r["p"].barcode if r["p"] else "",
+                        *(("" if v is None else fmt_money(v)) for v in r["price"]),
+                        "" if r["pct"] is None else f"{r['pct']:.1f}",
+                        *(("" if v is None else fmt_money(v)) for v in r["cost"]), r["who"], r["e"].reason or ""])
+        return Response("\ufeff" + buf.getvalue(), media_type="text/csv; charset=utf-8",
+                        headers={"Content-Disposition": f'attachment; filename="prices-{f_from}-{f_to}.csv"'})
+    return render(request, "prices.html", {"rows": rows, "d_from": f_from, "d_to": f_to, "q": q})
+
+
 @router.get("/accounting/log")
 def old_audit_log():
     return redirect("/log")
@@ -1007,6 +1097,7 @@ def audit_log(request: Request, d_from: str = "", d_to: str = "", what: str = ""
     page = max(1, page)
     entries = db.scalars(q.order_by(AuditLog.at.desc(), AuditLog.id.desc()).offset((page - 1) * per).limit(per)).all()
     return render(request, "audit.html", {"rows": audit_view(db, entries), "links": {e.id: audit_link(db, e) for e in entries},
+                                          "offset": (page - 1) * per,
                                           "d_from": f_from, "d_to": f_to, "what": what, "manual": manual,
                                           "groups": [(g, LOG_GROUPS[g][0]) for g in allowed],
                                           "page": page, "pages": max(1, -(-total // per)), "total": total})

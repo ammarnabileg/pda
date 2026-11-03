@@ -33,6 +33,8 @@ class _CountScreenState extends State<CountScreen> {
   final lines = <_CountLine>[];
   final products = <int, Product>{};
   String? id, startedAt;
+  // The stocktake this count belongs to: same date on several devices = one stocktake, one committee per device.
+  String? countDate, committee;
   bool loaded = false;
   String? lastId;
   String? lastNote;
@@ -51,6 +53,8 @@ class _CountScreenState extends State<CountScreen> {
     if (d is Map) {
       id = d['id'] as String?;
       startedAt = d['started_at'] as String?;
+      countDate = d['count_date'] as String?;
+      committee = d['committee'] as String?;
       for (final j in d['lines'] as List) {
         lines.add(_CountLine(j['p'] as int, j['b'] as int, (j['n'] as int?) ?? 1, j['i'] as String?));
       }
@@ -58,18 +62,35 @@ class _CountScreenState extends State<CountScreen> {
     products.addAll(await db.productsByIds(lines.map((l) => l.productId)));
     lines.removeWhere((l) => !products.containsKey(l.productId));
     if (mounted) setState(() => loaded = true);
+    if (committee == null && mounted) await _askHeader();
   }
+
+  /// Date and committee number, asked once when a new count starts (and changeable from the header).
+  Future<bool> _askHeader() async {
+    final r = await showAppSheet<(String, String)>(context, _CountHeaderSheet(date: countDate ?? _today(), committee: committee ?? ''));
+    if (r == null || !mounted) return committee != null;
+    setState(() {
+      countDate = r.$1;
+      committee = r.$2;
+    });
+    await _save();
+    return true;
+  }
+
+  static String _today() => DateTime.now().toIso8601String().substring(0, 10);
 
   Future<void> _save() {
     id ??= uuid4();
     startedAt ??= DateTime.now().toUtc().toIso8601String();
     return AppScope.read(context).db.setJson(
       'draft_count',
-      lines.isEmpty
+      lines.isEmpty && committee == null
           ? null
           : {
               'id': id,
               'started_at': startedAt,
+              'count_date': countDate,
+              'committee': committee,
               'lines': [
                 for (final l in lines) {'i': l.id, 'p': l.productId, 'b': l.base, 'n': l.scans},
               ],
@@ -79,6 +100,8 @@ class _CountScreenState extends State<CountScreen> {
 
   Future<void> _onProduct(ScanHit? h) async {
     if (h == null || !mounted) return;
+    if (committee == null && !await _askHeader()) return;
+    if (!mounted) return;
     final p = h.product;
     products[p.id] = p;
     var i = lines.lastIndexWhere((l) => l.productId == p.id);
@@ -215,8 +238,12 @@ class _CountScreenState extends State<CountScreen> {
     final app = AppScope.read(context);
     await _save();
     final countId = id!;
+    final no = await app.db.nextSerial('counts');
     await app.db.enqueue('counts', countId, {
       'id': countId,
+      'device_no': no,
+      'count_date': countDate ?? _today(),
+      'committee': committee,
       'employee_id': app.employee?.id,
       'started_at': startedAt,
       'finished_at': DateTime.now().toUtc().toIso8601String(),
@@ -227,23 +254,54 @@ class _CountScreenState extends State<CountScreen> {
     });
     final n = _perProduct().length;
     await app.db.addHistory('counts', countId, {
+      'no': no,
+      'count_date': countDate ?? _today(),
+      'committee': committee,
       'employee': app.employee?.name,
       'lines': [
         for (final e in _perProduct().entries) {'name': products[e.key]!.name, 'counted': products[e.key]!.baseText(e.value)},
       ],
     });
+    final doneCommittee = committee;
     lines.clear();
     id = null;
     startedAt = null;
+    countDate = null;
+    committee = null;
     await app.db.set('draft_count', null);
     await app.recordSaved();
     if (!mounted) return;
     Navigator.of(context).pushReplacement(
       MaterialPageRoute(
-        builder: (_) => _CountDone(count: n, id: countId),
+        builder: (_) => _CountDone(count: n, id: countId, no: no, committee: doneCommittee),
       ),
     );
   }
+
+  Widget _header() => Material(
+    color: committee == null ? cOrange2 : cBlue2,
+    borderRadius: BorderRadius.circular(S.radius),
+    child: InkWell(
+      borderRadius: BorderRadius.circular(S.radius),
+      onTap: _askHeader,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: S.m, vertical: S.s),
+        child: Row(
+          children: [
+            Icon(Icons.groups_outlined, color: committee == null ? cOrange : cBlue),
+            const SizedBox(width: S.s),
+            Expanded(
+              child: Text(
+                committee == null ? 'اكتب رقم اللجنة وتاريخ الجرد' : 'لجنة $committee · جرد يوم ${countDate ?? _today()}',
+                style: T.label.copyWith(color: committee == null ? cOrange : cBlue),
+              ),
+            ),
+            Text('تغيير', style: T.label.copyWith(color: committee == null ? cOrange : cBlue)),
+          ],
+        ),
+      ),
+    ),
+  );
 
   @override
   Widget build(BuildContext context) {
@@ -260,6 +318,8 @@ class _CountScreenState extends State<CountScreen> {
           : ListView(
               padding: const EdgeInsets.all(S.edge),
               children: [
+                _header(),
+                const SizedBox(height: S.s),
                 if (lines.isEmpty)
                   ScanPrompt(title: 'امسح أول صنف لبدء الجرد', sub: 'بعدها اكتب العدد الموجود على الرف', onType: type, onSearch: search)
                 else ...[
@@ -328,9 +388,10 @@ class _CountScreenState extends State<CountScreen> {
 }
 
 class _CountDone extends StatelessWidget {
-  final int count;
+  final int count, no;
   final String id;
-  const _CountDone({required this.count, required this.id});
+  final String? committee;
+  const _CountDone({required this.count, required this.id, required this.no, this.committee});
   @override
   Widget build(BuildContext context) {
     final now = TimeOfDay.now();
@@ -347,6 +408,7 @@ class _CountDone extends StatelessWidget {
           ),
           const SizedBox(height: S.m),
           const Text('تم حفظ الجرد', textAlign: TextAlign.center, style: T.heading),
+          Text('جرد رقم $no${committee != null ? ' · لجنة $committee' : ''}', textAlign: TextAlign.center, style: T.subStrong),
           Text(
             '$count صنف · الساعة ${now.hour.toString().padLeft(2, '0')}:${now.minute.toString().padLeft(2, '0')}',
             textAlign: TextAlign.center,
@@ -362,4 +424,87 @@ class _CountDone extends StatelessWidget {
       ),
     );
   }
+}
+
+class _CountHeaderSheet extends StatefulWidget {
+  final String date, committee;
+  const _CountHeaderSheet({required this.date, required this.committee});
+  @override
+  State<_CountHeaderSheet> createState() => _CountHeaderSheetState();
+}
+
+class _CountHeaderSheetState extends State<_CountHeaderSheet> {
+  late final ctl = TextEditingController(text: widget.committee);
+  late String date = widget.date;
+  String? error;
+
+  @override
+  void dispose() {
+    ctl.dispose();
+    super.dispose();
+  }
+
+  Future<void> _pickDate() async {
+    final now = DateTime.now();
+    final d = await showDatePicker(
+      context: context,
+      initialDate: DateTime.tryParse(date) ?? now,
+      firstDate: now.subtract(const Duration(days: 30)),
+      lastDate: now.add(const Duration(days: 7)),
+    );
+    if (d != null) setState(() => date = d.toIso8601String().substring(0, 10));
+  }
+
+  void _ok() {
+    final c = ctl.text.trim();
+    if (c.isEmpty) {
+      setState(() => error = 'رقم اللجنة مطلوب');
+      return;
+    }
+    // A barcode scanned by mistake lands here as a long number.
+    if (c.length > 4 || int.tryParse(c) == null) {
+      ctl.clear();
+      setState(() => error = 'ده شكله باركود. اكتب رقم اللجنة (مثلاً 1 أو 2)');
+      return;
+    }
+    Navigator.pop(context, (date, c));
+  }
+
+  @override
+  Widget build(BuildContext context) => Column(
+    mainAxisSize: MainAxisSize.min,
+    crossAxisAlignment: CrossAxisAlignment.stretch,
+    children: [
+      const Text('بيانات الجرد', style: T.heading),
+      const Text('كل الأجهزة اللي بتجرد في نفس اليوم تكتب نفس التاريخ، وكل جهاز رقم لجنة مختلف.', style: T.sub),
+      const SizedBox(height: S.m),
+      Row(
+        children: [
+          const Text('تاريخ الجرد: ', style: T.label),
+          Expanded(
+            child: Text(date, style: T.subStrong, textDirection: TextDirection.ltr, textAlign: TextAlign.right),
+          ),
+          TextButton.icon(
+            onPressed: _pickDate,
+            icon: const Icon(Icons.event),
+            label: const Text('تغيير', style: T.label),
+          ),
+        ],
+      ),
+      const SizedBox(height: S.s),
+      TextField(
+        key: const Key('committee'),
+        controller: ctl,
+        autofocus: true,
+        keyboardType: TextInputType.number,
+        maxLength: 20,
+        style: T.heading,
+        textInputAction: TextInputAction.done,
+        onSubmitted: (_) => _ok(),
+        decoration: InputDecoration(labelText: 'رقم اللجنة', errorText: error, counterText: ''),
+      ),
+      const SizedBox(height: S.s),
+      BigButton('ابدأ الجرد', icon: Icons.play_arrow, onPressed: _ok),
+    ],
+  );
 }

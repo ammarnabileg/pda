@@ -332,6 +332,15 @@ class LocalDb {
     ];
   }
 
+  /// The device's own running number per kind (sales, counts): 1, 2, 3 ... Survives syncs and re-pairing.
+  Future<int> nextSerial(String kind) => db.transaction((txn) async {
+    final key = 'serial_$kind';
+    final r = await txn.query('kv', where: 'key = ?', whereArgs: [key]);
+    final n = (r.isEmpty ? 0 : int.tryParse(r.first['value'] as String) ?? 0) + 1;
+    await txn.insert('kv', {'key': key, 'value': '$n'}, conflictAlgorithm: ConflictAlgorithm.replace);
+    return n;
+  });
+
   // ---------- outbox ----------
 
   Future<void> enqueue(String kind, String id, Map<String, Object?> payload) => db.insert('outbox', {

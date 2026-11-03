@@ -76,11 +76,17 @@
   <div style="flex:2;min-width:200px"><label for="note">السبب</label><input id="note" name="note" placeholder="مثال: تالف، هدية، تصحيح" required></div>
   <button class="btn light" style="align-self:end">تعديل الرصيد يدوياً</button>
 </form>{% endif %}
+{% if prices is defined %}{% from "_prices.html" import price_cell %}
+<h2>سجل الأسعار</h2>
+<div class="table-wrap" style="max-height:320px"><table><thead><tr><th class="num">م</th><th>الوقت</th><th>سعر البيع</th><th>سعر الشراء</th><th>مين</th></tr></thead>
+{% for r in prices %}<tr><td class="num">{{ loop.index }}</td><td>{{ r.e.at|dt }}</td><td>{{ price_cell(r.price, r.pct) }}{% if r.new %} <span class="pill p-ok">أول سعر</span>{% endif %}</td><td>{{ price_cell(r.cost) }}</td><td>{{ r.who }}</td></tr>
+{% else %}<tr><td colspan="5" class="muted">السعر ماتغيّرش من أول ما السجل اشتغل</td></tr>{% endfor %}
+</table></div>{% endif %}
 <h2>آخر حركات المخزون</h2>
-<div class="table-wrap"><table><thead><tr><th>الوقت</th><th>النوع</th><th class="num">الكمية</th><th>مرجع / ملاحظة</th></tr></thead>
+<div class="table-wrap"><table><thead><tr><th class="num">م</th><th>الوقت</th><th>النوع</th><th class="num">الكمية</th><th>مرجع / ملاحظة</th></tr></thead>
 {% set reasons = {"sale": "بيع", "receipt": "استلام", "count": "جرد", "manual": "يدوي", "edit": "تعديل محاسبة"} %}
-{% for m in moves %}<tr><td>{{ m.created_at|dt }}</td><td>{{ reasons[m.reason] }}</td><td class="num {{ 'neg' if m.delta < 0 else 'pos' }}">{{ m.delta|qty(p.unit) }}</td><td>{% if m.reason == 'sale' and m.ref %}<a href="/sales/{{ m.ref }}">فاتورة {{ m.ref[:8] }}</a>{% elif m.reason == 'edit' and m.ref and m.ref[:2] == 'R-' %}<a href="/receipts/{{ m.ref[2:] }}">تعديل سند {{ m.ref[2:] }}</a> · {{ m.note or '' }}{% elif m.reason == 'edit' and m.ref and m.ref[:2] != 'C-' %}<a href="/sales/{{ m.ref }}">تعديل فاتورة {{ m.ref[:8] }}</a> · {{ m.note or '' }}{% elif m.reason == 'receipt' and m.ref %}<a href="/receipts/{{ m.ref[2:] }}">سند {{ m.ref[2:] }}</a>{% else %}{{ m.note or m.ref or '' }}{% endif %}</td></tr>
-{% else %}<tr><td colspan="4" class="muted">لا توجد حركات</td></tr>{% endfor %}
+{% for m in moves %}<tr><td class="num">{{ loop.index }}</td><td>{{ m.created_at|dt }}</td><td>{{ reasons[m.reason] }}</td><td class="num {{ 'neg' if m.delta < 0 else 'pos' }}">{{ m.delta|qty(p.unit) }}</td><td>{% if m.reason == 'sale' and m.ref %}<a href="/sales/{{ m.ref }}">فاتورة {{ sale_nos.get(m.ref, m.ref[:8]) }}</a>{% elif m.reason == 'edit' and m.ref and m.ref[:2] == 'R-' %}<a href="/receipts/{{ m.ref[2:] }}">تعديل سند {{ m.ref[2:] }}</a> · {{ m.note or '' }}{% elif m.reason == 'edit' and m.ref and m.ref[:2] != 'C-' %}<a href="/sales/{{ m.ref }}">تعديل فاتورة {{ sale_nos.get(m.ref, m.ref[:8]) }}</a> · {{ m.note or '' }}{% elif m.reason == 'count' and m.ref and m.ref[:2] == 'D-' %}<a href="/counts/day/{{ m.ref[2:] }}">جرد يوم {{ m.ref[2:] }}</a>{% elif m.reason == 'receipt' and m.ref %}<a href="/receipts/{{ m.ref[2:] }}">سند {{ m.ref[2:] }}</a>{% else %}{{ m.note or m.ref or '' }}{% endif %}</td></tr>
+{% else %}<tr><td colspan="5" class="muted">لا توجد حركات</td></tr>{% endfor %}
 </table></div>
 {% endif %}
 <script>

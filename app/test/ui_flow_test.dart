@@ -150,6 +150,17 @@ Future<AppState> startApp(WidgetTester tester) async {
   return app;
 }
 
+/// Opens a new count: the device asks for the committee number (and date) first.
+Future<void> openCount(WidgetTester tester, [String committee = '2']) async {
+  await tester.tap(find.text('جرد'));
+  await settle(tester);
+  await waitFor(tester, find.byKey(const Key('committee')));
+  await tester.pumpAndSettle();
+  await tester.enterText(find.byKey(const Key('committee')), committee);
+  await tester.tap(find.text('ابدأ الجرد'));
+  await settle(tester);
+}
+
 Future<void> login(WidgetTester tester, String name, String pin) async {
   await tester.tap(find.text(name));
   await tester.pumpAndSettle();
@@ -214,9 +225,11 @@ void main() {
     await settle(tester, 800);
     expect(find.text('تم تسجيل البيع'), findsOneWidget);
     expect(find.text(W.savedLocal), findsOneWidget, reason: 'offline: saved on the device, not claimed as sent');
+    expect(find.textContaining('فاتورة رقم 1 ·'), findsOneWidget, reason: "the device own invoice number");
     final out = await tester.runAsync(() => app.db.pendingOutbox());
     expect(out!.length, 1);
     expect(out.first['kind'], 'sales');
+    expect(out.first['payload'].toString(), contains('"device_no":1'));
     expect(await tester.runAsync(() => app.db.getJson('draft_sale')), isNull);
     await tester.pump(const Duration(seconds: 30)); // let message timers finish
   });
@@ -226,8 +239,7 @@ void main() {
     await login(tester, 'محمود', '3333');
     expect(find.text('بيع'), findsNothing);
 
-    await tester.tap(find.text('جرد'));
-    await settle(tester);
+    await openCount(tester);
     await scan(tester, '6281000123456');
     await settle(tester);
     await tester.tap(find.text('كرتون'));
@@ -343,8 +355,7 @@ void main() {
   testWidgets('scanning while the name search is open picks the product', (tester) async {
     final app = await startApp(tester);
     await login(tester, 'محمود', '3333');
-    await tester.tap(find.text('جرد'));
-    await settle(tester);
+    await openCount(tester);
     await tester.tap(find.text('ابحث بالاسم'));
     await settle(tester);
     await tester.enterText(find.byType(TextField).last, '2100000012345');
@@ -442,8 +453,7 @@ void main() {
   testWidgets('counting with a carton barcode starts the pad on cartons', (tester) async {
     await startApp(tester);
     await login(tester, 'محمود', '3333');
-    await tester.tap(find.text('جرد'));
-    await settle(tester);
+    await openCount(tester);
     await scan(tester, '16281000123453');
     await settle(tester);
     await tester.tap(find.text('2').last);
@@ -487,8 +497,7 @@ void main() {
   testWidgets('count: a second shelf is a separate entry, sent as one total per product', (tester) async {
     final app = await startApp(tester);
     await login(tester, 'محمود', '3333');
-    await tester.tap(find.text('جرد'));
-    await settle(tester);
+    await openCount(tester);
     await scan(tester, '6281000123456');
     await settle(tester);
     await tester.tap(find.text('4').last);
@@ -511,6 +520,11 @@ void main() {
     await settle(tester, 800);
     final out = (await tester.runAsync(() => app.db.pendingOutbox()))!;
     expect(out.single['payload'].toString(), contains('"counted":"7.000"'));
+    // The stocktake it belongs to, and the device's own count number.
+    expect(out.single['payload'].toString(), contains('"committee":"2"'));
+    expect(out.single['payload'].toString(), contains('"count_date":"${DateTime.now().toIso8601String().substring(0, 10)}"'));
+    expect(out.single['payload'].toString(), contains('"device_no":1'));
+    expect(find.text('جرد رقم 1 · لجنة 2'), findsOneWidget);
     await tester.pump(const Duration(seconds: 30));
   });
 
@@ -662,5 +676,22 @@ void main() {
     await scan(tester, '6281000123456');
     await settle(tester);
     expect(find.text('سعر الشراء'), findsOneWidget);
+  });
+
+  testWidgets('a scanned barcode is not taken as the committee number', (tester) async {
+    await startApp(tester);
+    await login(tester, 'محمود', '3333');
+    await tester.tap(find.text('جرد'));
+    await settle(tester);
+    await waitFor(tester, find.byKey(const Key('committee')));
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byKey(const Key('committee')), '6281000123456');
+    await tester.tap(find.text('ابدأ الجرد'));
+    await tester.pumpAndSettle();
+    expect(find.textContaining('ده شكله باركود'), findsOneWidget);
+    await tester.enterText(find.byKey(const Key('committee')), '3');
+    await tester.tap(find.text('ابدأ الجرد'));
+    await settle(tester);
+    expect(find.textContaining('لجنة 3 · جرد يوم'), findsOneWidget);
   });
 }

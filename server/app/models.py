@@ -1,8 +1,8 @@
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from decimal import Decimal
 
 from sqlalchemy import (
-    BigInteger, Boolean, DateTime, ForeignKey, Integer, Numeric, String, Text, Uuid,
+    BigInteger, Boolean, Date, DateTime, ForeignKey, Integer, Numeric, String, Text, Uuid, text,
 )
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -236,6 +236,10 @@ class ReceiptLine(Base):
 class Sale(Base):
     __tablename__ = "sales"
     id: Mapped[str] = mapped_column(Uuid(as_uuid=False), primary_key=True)
+    # Invoice number: one sequence for the whole co-op, given when the sale reaches the server.
+    no: Mapped[int] = mapped_column(BigInteger, unique=True, server_default=text("nextval('sale_no')"))
+    # The device's own running number, shown to the cashier before the sale is synced.
+    device_no: Mapped[int | None] = mapped_column(Integer)
     device_id: Mapped[int] = mapped_column(ForeignKey("devices.id"))
     employee_id: Mapped[int | None] = mapped_column(ForeignKey("employees.id"))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
@@ -265,6 +269,11 @@ class SaleLine(Base):
 class CountSession(Base):
     __tablename__ = "count_sessions"
     id: Mapped[str] = mapped_column(Uuid(as_uuid=False), primary_key=True)
+    no: Mapped[int] = mapped_column(BigInteger, unique=True, server_default=text("nextval('count_no')"))
+    device_no: Mapped[int | None] = mapped_column(Integer)
+    # One stocktake = one date; each committee (team on one device) counts its part. Same date = counted together.
+    count_date: Mapped[date | None] = mapped_column(Date, index=True)
+    committee: Mapped[str | None] = mapped_column(String(20))
     device_id: Mapped[int] = mapped_column(ForeignKey("devices.id"))
     employee_id: Mapped[int | None] = mapped_column(ForeignKey("employees.id"))
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))

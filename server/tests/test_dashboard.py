@@ -174,6 +174,7 @@ def test_new_pages_render(admin_client, seed, device_client):
         r = admin_client.get(url)
         assert r.status_code == 200, url
     from app.models import CountSession
-    cid = admin_client.get("/counts").text.split('/counts/')[1].split('"')[0]
+    import re
+    cid = re.search(r'/counts/([0-9a-f-]{36})"', admin_client.get("/counts").text).group(1)
     r = admin_client.get(f"/counts/{cid}?only=diff")
     assert "ناقص 3 حبة" in r.text and "سكر" not in r.text.split("الفروق بس")[1]

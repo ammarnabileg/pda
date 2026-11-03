@@ -1,8 +1,8 @@
 {# History of one record: every change the database recorded, newest first. #}
 <h2>السجل</h2>
 {% if history %}
-<div class="table-wrap"><table><thead><tr><th>الوقت</th><th>مين</th><th>إيه</th><th>اتغيّر</th><th>السبب</th></tr></thead>
-{% for h in history %}<tr><td>{{ h.e.at|dt }}</td><td>{{ h.who }}</td><td>{{ h.what }}{% if h.action %} <span class="pill {{ h.action[1] }}">{{ h.action[0] }}</span>{% endif %}</td>
+<div class="table-wrap"><table><thead><tr><th class="num">م</th><th>الوقت</th><th>مين</th><th>إيه</th><th>اتغيّر</th><th>السبب</th></tr></thead>
+{% for h in history %}<tr><td class="num">{{ loop.index }}</td><td>{{ h.e.at|dt }}</td><td>{{ h.who }}</td><td>{{ h.what }}{% if h.action %} <span class="pill {{ h.action[1] }}">{{ h.action[0] }}</span>{% endif %}</td>
 <td>{% for label, old, new in h.changes %}<div><b>{{ label }}:</b> {% if h.e.action == 'INSERT' %}<span dir="auto">{{ new }}</span>{% elif h.e.action == 'DELETE' %}<span dir="auto">{{ old }}</span>{% else %}<span dir="auto">{{ old }}</span> ← <span dir="auto">{{ new }}</span>{% endif %}</div>{% endfor %}</td>
 <td>{{ h.e.reason or '' }}</td></tr>{% endfor %}
 </table></div>
