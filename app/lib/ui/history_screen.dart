@@ -93,7 +93,11 @@ class _HistoryScreenState extends State<HistoryScreen> {
     final d = e.data;
     final lines = (d['lines'] as List?) ?? const [];
     final (String title, String? amount, String details) = switch (e.kind) {
-      'sales' => ('فاتورة ${saleNo(e)}', money((d['total'] as num).toInt()), '${lines.length} صنف · ${d['employee'] ?? ''}'),
+      'sales' => (
+        'فاتورة ${saleNo(e)}',
+        money((d['total'] as num).toInt()),
+        '${d['mi'] != null ? 'وزارة ${d['mi']} · ' : ''}${lines.length} صنف · ${d['employee'] ?? ''}',
+      ),
       'new_receipts' => (
         '${d['supplier']}${d['invoice_no'] != null ? ' · فاتورة ${d['invoice_no']}' : ' · من غير سند'}',
         null,

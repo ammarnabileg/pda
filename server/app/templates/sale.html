@@ -2,6 +2,13 @@
 {% block content %}
 <div class="bar"><h1>فاتورة رقم {{ s.no }}</h1>{% if user.is_admin %}<a class="btn light no-print" href="/accounting/sales/{{ s.id }}">تعديل (المحاسبة)</a>{% endif %}<button class="btn light no-print" onclick="print()">طباعة</button><a class="btn light no-print" href="/sales">رجوع</a></div>
 <p class="muted">{{ s.created_at|dt }} · الموظف: {{ s.employee.name if s.employee else '—' }} · الجهاز: {{ s.device.name }}{% if s.device_no %} (فاتورة #{{ s.device_no }} على الجهاز){% endif %} · <span dir="ltr" style="font-size:12px">{{ s.id }}</span></p>
+<div class="card grid">
+  <div><small class="muted">فاتورة الوزارة (التموين)</small><br><b dir="ltr">{{ s.ministry_invoice_no or '—' }}</b></div>
+  <div><small class="muted">إجمالي فاتورة الوزارة</small><br><b>{{ (s.ministry_total|money ~ ' د.ك') if s.ministry_total is not none else '—' }}</b>
+    {% if 'total' in flags %}<br><span class="pill p-red">مختلف عن الفاتورة دي بـ {{ (s.total - s.ministry_total)|money }} د.ك</span>{% endif %}</div>
+  {% if 'missing' in flags %}<div><span class="pill p-red">الفاتورة دي من غير رقم فاتورة وزارة</span></div>{% endif %}
+</div>
+{% if same %}<div class="alert error"><b>فاتورة الوزارة دي اتصرفت أكتر من مرة:</b>{% for o in same %} <a href="/sales/{{ o.id }}">فاتورة {{ o.no }}</a> ({{ o.created_at|dt }} · {{ o.device.name }} · {{ o.total|money }}){{ '،' if not loop.last }}{% endfor %}. راجع مع الكاشير: لو اتصرفت مرتين بالغلط، صلّح الكميات من «تعديل (المحاسبة)».</div>{% endif %}
 <div class="table-wrap"><table><tr><th class="num">م</th><th>الصنف</th><th>الكمية</th><th class="num">السعر</th><th class="num">الإجمالي</th></tr>
 {% for l in s.lines %}<tr><td class="num">{{ loop.index }}</td><td>{{ l.product.name }}</td><td>{{ l.qty|qty(l.product.unit) }} {{ MODES[l.mode] }}</td><td class="num">{{ l.unit_price|money }}</td><td class="num">{{ l.total|money }}</td></tr>{% endfor %}
 <tr><th colspan="4">الإجمالي</th><th class="num">{{ s.total|money }} د.ك</th></tr></table></div>

@@ -153,6 +153,18 @@ Future<AppState> startApp(WidgetTester tester) async {
   return app;
 }
 
+/// Opens a new sale: the device asks for the ministry ration invoice number first.
+Future<void> openSale(WidgetTester tester, [String no = '168126059405', String total = '']) async {
+  await tester.tap(find.text('بيع'));
+  await settle(tester);
+  await waitFor(tester, find.byKey(const Key('ministry_no')));
+  await tester.pumpAndSettle();
+  await tester.enterText(find.byKey(const Key('ministry_no')), no);
+  if (total.isNotEmpty) await tester.enterText(find.byKey(const Key('ministry_total')), total);
+  await tester.tap(find.text('ابدأ البيع'));
+  await settle(tester);
+}
+
 /// Opens a new count: the device asks for the committee number (and date) first.
 Future<void> openCount(WidgetTester tester, [String committee = '2']) async {
   await tester.tap(find.text('جرد'));
@@ -193,8 +205,7 @@ void main() {
     expect(find.text('بيع'), findsOneWidget);
     expect(find.text('جرد'), findsNothing, reason: 'cashiers do not count stock');
 
-    await tester.tap(find.text('بيع'));
-    await settle(tester);
+    await openSale(tester);
     await scan(tester, '6281000123456');
     await settle(tester);
     expect(find.text('أرز بسمتي ٥ كجم'), findsOneWidget);
@@ -233,6 +244,7 @@ void main() {
     expect(out!.length, 1);
     expect(out.first['kind'], 'sales');
     expect(out.first['payload'].toString(), contains('"device_no":1'));
+    expect(out.first['payload'].toString(), contains('"ministry_invoice_no":"168126059405"'));
     expect(await tester.runAsync(() => app.db.getJson('draft_sale')), isNull);
     await tester.pump(const Duration(seconds: 30)); // let message timers finish
   });
@@ -300,8 +312,7 @@ void main() {
   testWidgets('scanner that injects text, and a scanner with no Enter suffix', (tester) async {
     await startApp(tester);
     await login(tester, 'أحمد', '2222');
-    await tester.tap(find.text('بيع'));
-    await settle(tester);
+    await openSale(tester);
 
     // Mode 1: the wedge writes the code into the focused field and presses Enter.
     final field = find.byKey(const Key('scanner-input'));
@@ -375,8 +386,7 @@ void main() {
     addTearDown(tester.platformDispatcher.clearTextScaleFactorTestValue);
     await startApp(tester);
     await login(tester, 'أحمد', '2222');
-    await tester.tap(find.text('بيع'));
-    await settle(tester);
+    await openSale(tester);
     for (var i = 0; i < 3; i++) {
       await scan(tester, '6281000999999');
       await settle(tester);
@@ -414,8 +424,7 @@ void main() {
   testWidgets('a carton barcode sells a carton; a second piece barcode sells a piece', (tester) async {
     await startApp(tester);
     await login(tester, 'أحمد', '2222');
-    await tester.tap(find.text('بيع'));
-    await settle(tester);
+    await openSale(tester);
     await scan(tester, '16281000123453');
     await settle(tester);
     expect(find.widgetWithText(QtyStepper, '1 كرتون'), findsOneWidget);
@@ -439,8 +448,7 @@ void main() {
   testWidgets('other unit, added to the old line: 1 piece + 1 carton = 7 pieces', (tester) async {
     await startApp(tester);
     await login(tester, 'أحمد', '2222');
-    await tester.tap(find.text('بيع'));
-    await settle(tester);
+    await openSale(tester);
     await scan(tester, '6281000123456');
     await settle(tester);
     await scan(tester, '16281000123453');
@@ -469,8 +477,7 @@ void main() {
   testWidgets('same unit twice: added to the line, with a "separate line" option', (tester) async {
     final app = await startApp(tester);
     await login(tester, 'أحمد', '2222');
-    await tester.tap(find.text('بيع'));
-    await settle(tester);
+    await openSale(tester);
     await scan(tester, '6281000123456');
     await settle(tester);
     await scan(tester, '6281000123456');
@@ -561,8 +568,7 @@ void main() {
   testWidgets('the scan box says the device is listening and shows the last code', (tester) async {
     await startApp(tester);
     await login(tester, 'أحمد', '2222');
-    await tester.tap(find.text('بيع'));
-    await settle(tester);
+    await openSale(tester);
     expect(find.textContaining('جاهز —'), findsOneWidget);
     await scan(tester, '6281000123456');
     await settle(tester);
@@ -718,5 +724,41 @@ void main() {
     await tester.tap(find.text('ابدأ الجرد'));
     await settle(tester);
     expect(find.textContaining('لجنة 3 · جرد يوم'), findsOneWidget);
+  });
+
+  testWidgets('ministry invoice: required, compared with its total, never sold twice on one device', (tester) async {
+    await startApp(tester);
+    await login(tester, 'أحمد', '2222');
+    await tester.tap(find.text('بيع'));
+    await settle(tester);
+    await waitFor(tester, find.byKey(const Key('ministry_no')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('ابدأ البيع'));
+    await tester.pumpAndSettle();
+    expect(find.text('اكتب رقم فاتورة الوزارة (أرقام بس)'), findsOneWidget);
+    await tester.enterText(find.byKey(const Key('ministry_no')), '555000111');
+    await tester.enterText(find.byKey(const Key('ministry_total')), '2.000');
+    await tester.tap(find.text('ابدأ البيع'));
+    await settle(tester);
+    await scan(tester, '6281000123456'); // 2.450, not the 2.000 on the ministry invoice
+    await settle(tester);
+    expect(find.textContaining('فرق 0.450'), findsOneWidget);
+    await tester.tap(find.text('إنهاء البيع'));
+    await tester.pumpAndSettle();
+    expect(find.textContaining('إجمالي فاتورة الوزارة 2.000'), findsOneWidget);
+    await tester.tap(find.text('تم الدفع'));
+    await settle(tester, 800);
+    expect(find.text('فاتورة الوزارة 555000111'), findsOneWidget);
+    await noToast(tester);
+    // The same ministry invoice again on this device is refused.
+    await tester.tap(find.text('فاتورة جديدة'));
+    await settle(tester);
+    await waitFor(tester, find.byKey(const Key('ministry_no')));
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byKey(const Key('ministry_no')), '555000111');
+    await tester.tap(find.text('ابدأ البيع'));
+    await settle(tester);
+    expect(find.text('فاتورة الوزارة دي اتصرفت قبل كده'), findsOneWidget);
+    await tester.pump(const Duration(seconds: 30));
   });
 }

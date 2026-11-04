@@ -4,14 +4,18 @@
 <form class="bar card" method="get">
   <div><label>من</label><input type="date" name="d_from" value="{{ d_from }}"></div>
   <div><label>إلى</label><input type="date" name="d_to" value="{{ d_to }}"></div>
+  <div><label for="mi">رقم فاتورة الوزارة</label><input id="mi" name="mi" value="{{ mi }}" inputmode="numeric" dir="ltr" placeholder="أي تاريخ"></div>
   <div><label>الموظف</label><select name="employee"><option value="0">الكل</option>{% for e in employees %}<option value="{{ e.id }}" {{ 'selected' if e.id == employee }}>{{ e.name }}</option>{% endfor %}</select></div>
+  <label class="check" style="align-self:end"><input type="checkbox" name="problems" value="1" {{ 'checked' if problems }}> اللي فيها مشكلة بس</label>
   <button class="btn" style="align-self:end">عرض</button>
   <a class="btn light" style="align-self:end" href="/sales">النهارده</a>
 </form>
 <div class="range">الفترة: من {{ d_from }} إلى {{ d_to }}{% if employee %} · موظف واحد{% endif %}{% if items|length == 1000 %} · <span class="neg">بيظهر أول 1000 فاتورة بس، صغّر الفترة</span>{% endif %}</div>
+{% if problem_count and not problems %}<div class="alert error">{{ problem_count }} فاتورة فيها مشكلة في فاتورة الوزارة (مكررة، أو الإجمالي مختلف، أو من غير رقم). <a href="?d_from={{ d_from }}&d_to={{ d_to }}&employee={{ employee }}&problems=1">اعرضهم</a></div>{% endif %}
 <div class="stats"><div class="stat"><small>عدد الفواتير</small><b>{{ items|length }}</b></div><div class="stat"><small>الإجمالي</small><b>{{ total|money }}</b> د.ك</div></div>
-<div class="table-wrap"><table><tr><th class="num">م</th><th>رقم الفاتورة</th><th>الوقت</th><th>الموظف</th><th>الجهاز</th><th>الأصناف</th><th class="num">المبلغ</th></tr>
-{% for s in items %}<tr><td class="num">{{ loop.index }}</td><td><a href="/sales/{{ s.id }}">فاتورة {{ s.no }}</a>{% if s.device_no %} <small class="muted">(جهاز #{{ s.device_no }})</small>{% endif %}</td><td>{{ s.created_at|dt }}</td><td>{{ s.employee.name if s.employee else '—' }}</td><td>{{ s.device.name }}</td><td>{{ s.lines|length }}</td><td class="num">{{ s.total|money }}</td></tr>
-{% else %}<tr><td colspan="7" class="muted">لا توجد فواتير في الفترة دي</td></tr>{% endfor %}
+<div class="table-wrap"><table><tr><th class="num">م</th><th>رقم الفاتورة</th><th>فاتورة الوزارة</th><th>الوقت</th><th>الموظف</th><th>الجهاز</th><th>الأصناف</th><th class="num">المبلغ</th></tr>
+{% for s in items %}<tr><td class="num">{{ loop.index }}</td><td><a href="/sales/{{ s.id }}">فاتورة {{ s.no }}</a>{% if s.device_no %} <small class="muted">(جهاز #{{ s.device_no }})</small>{% endif %}</td>
+<td><span dir="ltr">{{ s.ministry_invoice_no or '—' }}</span>{% for f in flags[s.id] %} <span class="pill p-red">{{ {'duplicate': 'مكررة', 'total': 'الإجمالي مختلف', 'missing': 'من غير رقم'}[f] }}</span>{% endfor %}</td><td>{{ s.created_at|dt }}</td><td>{{ s.employee.name if s.employee else '—' }}</td><td>{{ s.device.name }}</td><td>{{ s.lines|length }}</td><td class="num">{{ s.total|money }}</td></tr>
+{% else %}<tr><td colspan="8" class="muted">لا توجد فواتير في الفترة دي</td></tr>{% endfor %}
 </table></div>
 {% endblock %}

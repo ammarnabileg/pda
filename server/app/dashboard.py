@@ -819,16 +819,25 @@ def receipt_cancel(rid: int, request: Request, user=Depends(need["receipts"]), d
 # ---------- sales & reports ----------
 
 @router.get("/sales", response_class=HTMLResponse)
-def sales(request: Request, d_from: str = "", d_to: str = "", employee: int = 0, user=Depends(need["sales"]), db: Session = Depends(get_db)):
+def sales(request: Request, d_from: str = "", d_to: str = "", employee: int = 0, mi: str = "", problems: int = 0,
+          user=Depends(need["sales"]), db: Session = Depends(get_db)):
     today = datetime.now(TZ).date()
     f, t = parse_date(d_from, today), parse_date(d_to, today)
     start, end = local_day_range(f, t)
-    stmt = select(Sale).where(Sale.created_at >= start, Sale.created_at < end)
+    mi = "".join(mi.split())
+    if mi:  # a ministry invoice number finds its sale whatever the dates
+        stmt = select(Sale).where(Sale.ministry_invoice_no == mi)
+    else:
+        stmt = select(Sale).where(Sale.created_at >= start, Sale.created_at < end)
     if employee:
         stmt = stmt.where(Sale.employee_id == employee)
     items = db.scalars(stmt.order_by(Sale.created_at.desc()).limit(1000)).all()
+    flags = services.ministry_flags(db, items)
+    if problems:
+        items = [s for s in items if flags[s.id]]
     return render(request, "sales.html", {
-        "items": items, "d_from": f, "d_to": t, "employee": employee,
+        "items": items, "d_from": f, "d_to": t, "employee": employee, "mi": mi, "problems": problems, "flags": flags,
+        "problem_count": sum(1 for v in flags.values() if v),
         "total": sum((s.total for s in items), Decimal(0)),
         "employees": db.scalars(select(Employee).order_by(Employee.name)).all()})
 
@@ -841,7 +850,10 @@ def sale_detail(sid: str, request: Request, user=Depends(need["sales"]), db: Ses
         s = None
     if not s:
         return redirect("/sales")
-    return render(request, "sale.html", {"s": s, **history(db, "sales", s.id, "sale_lines", [l.id for l in s.lines])})
+    same = db.scalars(select(Sale).where(Sale.ministry_invoice_no == s.ministry_invoice_no, Sale.id != s.id)
+                      .order_by(Sale.created_at)).all() if s.ministry_invoice_no else []
+    return render(request, "sale.html", {"s": s, "same": same, "flags": services.ministry_flags(db, [s])[s.id],
+                                         **history(db, "sales", s.id, "sale_lines", [l.id for l in s.lines])})
 
 
 @router.get("/reports", response_class=HTMLResponse)

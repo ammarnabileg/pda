@@ -251,6 +251,10 @@ class Sale(Base):
     no: Mapped[int] = mapped_column(BigInteger, unique=True, server_default=text("nextval('sale_no')"))
     # The device's own running number, shown to the cashier before the sale is synced.
     device_no: Mapped[int | None] = mapped_column(Integer)
+    # The ministry's ration invoice this sale delivers (فاتورة صرف المواد المدعومة), and the total printed on it.
+    # Not unique on purpose: two offline devices can deliver the same invoice; the dashboard flags it instead.
+    ministry_invoice_no: Mapped[str | None] = mapped_column(String(30), index=True)
+    ministry_total: Mapped[Decimal | None] = mapped_column(Money)
     device_id: Mapped[int] = mapped_column(ForeignKey("devices.id"))
     employee_id: Mapped[int | None] = mapped_column(ForeignKey("employees.id"))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)

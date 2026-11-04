@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../data/models.dart';
+import '../util/feedback.dart';
 import '../util/format.dart';
 import '../util/ids.dart';
 import 'history_screen.dart';
@@ -18,6 +19,9 @@ class _SaleScreenState extends State<SaleScreen> {
   final List<SaleLine> lines = [];
   final Map<int, Product> products = {};
   bool loaded = false;
+  // The ministry ration invoice this sale delivers: asked before the first item.
+  String? ministryNo;
+  int? ministryTotal; // fils, optional
   String? lastKey; // last scanned line, highlighted until the next one
   String? lastAdded; // "+1 حبة" next to it
   String filter = '';
@@ -34,14 +38,48 @@ class _SaleScreenState extends State<SaleScreen> {
     final draft = await db.getJson('draft_sale');
     if (draft is Map) {
       lines.addAll((draft['lines'] as List).map((j) => SaleLine.fromJson(j as Map<String, dynamic>)));
+      ministryNo = draft['mi'] as String?;
+      ministryTotal = draft['mt'] as int?;
     }
     products.addAll(await db.productsByIds(lines.map((l) => l.productId)));
     lines.removeWhere((l) => !products.containsKey(l.productId));
     if (mounted) setState(() => loaded = true);
+    if (ministryNo == null && mounted) await _askMinistry();
   }
 
-  Future<void> _save() =>
-      AppScope.read(context).db.setJson('draft_sale', lines.isEmpty ? null : {'lines': lines.map((l) => l.toJson()).toList()});
+  Future<void> _save() => AppScope.read(context).db.setJson(
+    'draft_sale',
+    lines.isEmpty && ministryNo == null ? null : {'lines': lines.map((l) => l.toJson()).toList(), 'mi': ministryNo, 'mt': ministryTotal},
+  );
+
+  /// Ministry invoice number (required) and its total; refused if this device already sold that invoice.
+  Future<bool> _askMinistry() async {
+    final r = await showAppSheet<(String, int?)>(context, _MinistrySheet(no: ministryNo ?? '', total: ministryTotal));
+    if (r == null || !mounted) return ministryNo != null;
+    final app = AppScope.read(context);
+    final old = r.$1 == ministryNo ? null : await app.db.saleForMinistryInvoice(r.$1);
+    if (!mounted) return false;
+    if (old != null) {
+      beepError();
+      await confirmSheet(
+        context,
+        title: 'فاتورة الوزارة دي اتصرفت قبل كده',
+        body: Text(
+          'فاتورة الوزارة ${r.$1} اتباعت على الجهاز ده في ${saleNo(old)} '
+          '(${old.at.toLocal().toString().substring(0, 16)}، ${money((old.data['total'] as num).toInt())} ${W.currency}).\n'
+          'مينفعش تتصرف مرتين. لو فيه غلط، كلّم المدير.',
+        ),
+        yes: 'حسناً',
+      );
+      return ministryNo != null;
+    }
+    setState(() {
+      ministryNo = r.$1;
+      ministryTotal = r.$2;
+    });
+    await _save();
+    return true;
+  }
 
   int _lineTotal(SaleLine l) => lineTotal(products[l.productId]!.unitPrice(l.mode), l.qty);
   int get total => lines.fold(0, (a, l) => a + _lineTotal(l));
@@ -141,6 +179,8 @@ class _SaleScreenState extends State<SaleScreen> {
 
   Future<void> _onProduct(ScanHit? h) async {
     if (h == null || !mounted) return;
+    if (ministryNo == null && !await _askMinistry()) return;
+    if (!mounted) return;
     final p = h.product;
     if (p.isKg) {
       final r = await numberPad(
@@ -267,14 +307,23 @@ class _SaleScreenState extends State<SaleScreen> {
   }
 
   Future<void> _finish() async {
+    if (ministryNo == null && !await _askMinistry()) return;
+    if (!mounted) return;
     final t = total;
     final n = lines.length;
+    final mismatch = ministryTotal != null && ministryTotal != t;
     final ok = await confirmSheet(
       context,
       title: 'تسجيل البيع',
       body: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
+          Text('فاتورة الوزارة $ministryNo', style: T.subStrong),
+          if (mismatch)
+            Text(
+              'إجمالي فاتورة الوزارة ${money(ministryTotal!)} والفاتورة هنا ${money(t)}: فرق ${money((t - ministryTotal!).abs())} ${W.currency}. راجع الأصناف والكميات.',
+              style: T.label.copyWith(color: cRed),
+            ),
           Text('$n صنف · $unitsSummary', style: T.sub),
           Text('${money(t)} ${W.currency}', style: T.total.copyWith(fontSize: 32)),
           const SizedBox(height: S.xs),
@@ -290,6 +339,8 @@ class _SaleScreenState extends State<SaleScreen> {
     await app.db.enqueue('sales', id, {
       'id': id,
       'device_no': no,
+      'ministry_invoice_no': ministryNo,
+      if (ministryTotal != null) 'ministry_total': money(ministryTotal!),
       'employee_id': app.employee?.id,
       'created_at': DateTime.now().toUtc().toIso8601String(),
       'lines': [
@@ -302,6 +353,8 @@ class _SaleScreenState extends State<SaleScreen> {
     }
     await app.db.addHistory('sales', id, {
       'no': no,
+      'mi': ministryNo,
+      'mt': ministryTotal,
       'total': t,
       'employee': app.employee?.name,
       'lines': [
@@ -315,13 +368,54 @@ class _SaleScreenState extends State<SaleScreen> {
           },
       ],
     });
+    final mi = ministryNo;
     lines.clear();
+    ministryNo = null;
+    ministryTotal = null;
     await _save();
     await app.recordSaved();
     if (!mounted) return;
     Navigator.of(context).pushReplacement(
       MaterialPageRoute(
-        builder: (_) => SaleDoneScreen(total: t, items: n, id: id, no: no),
+        builder: (_) => SaleDoneScreen(total: t, items: n, id: id, no: no, ministryNo: mi),
+      ),
+    );
+  }
+
+  Widget _ministryRow() {
+    final diff = ministryTotal == null || lines.isEmpty ? null : total - ministryTotal!;
+    return Padding(
+      padding: const EdgeInsets.only(bottom: S.xs),
+      child: Material(
+        color: ministryNo == null ? cOrange2 : (diff != null && diff != 0 ? cRed2 : cBlue2),
+        borderRadius: BorderRadius.circular(S.radius),
+        child: InkWell(
+          key: const Key('ministry'),
+          borderRadius: BorderRadius.circular(S.radius),
+          onTap: _askMinistry,
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: S.m, vertical: S.xs),
+            child: Row(
+              children: [
+                Icon(Icons.receipt_outlined, size: 20, color: ministryNo == null ? cOrange : cBlue),
+                const SizedBox(width: S.s),
+                Expanded(
+                  child: Text(
+                    ministryNo == null
+                        ? 'اكتب رقم فاتورة الوزارة'
+                        : 'فاتورة الوزارة $ministryNo'
+                              '${ministryTotal != null ? ' · ${money(ministryTotal!)}' : ''}'
+                              '${diff != null && diff != 0 ? ' · فرق ${money(diff.abs())}' : ''}',
+                    style: T.label.copyWith(color: diff != null && diff != 0 ? cRed : (ministryNo == null ? cOrange : cBlue)),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
+                const Text('تغيير', style: T.label),
+              ],
+            ),
+          ),
+        ),
       ),
     );
   }
@@ -341,6 +435,7 @@ class _SaleScreenState extends State<SaleScreen> {
               controller: _scroll,
               padding: const EdgeInsets.all(S.edge),
               children: [
+                _ministryRow(),
                 if (lines.isEmpty)
                   ScanPrompt(title: 'امسح أول صنف لبدء البيع', sub: 'كل مسح بيضيف حبة واحدة', onType: type, onSearch: search)
                 else
@@ -445,7 +540,8 @@ class _SaleScreenState extends State<SaleScreen> {
 class SaleDoneScreen extends StatelessWidget {
   final int total, items, no;
   final String id;
-  const SaleDoneScreen({super.key, required this.total, required this.items, required this.id, required this.no});
+  final String? ministryNo;
+  const SaleDoneScreen({super.key, required this.total, required this.items, required this.id, required this.no, this.ministryNo});
 
   @override
   Widget build(BuildContext context) => WorkScaffold(
@@ -463,6 +559,7 @@ class SaleDoneScreen extends StatelessWidget {
         const Text('تم تسجيل البيع', textAlign: TextAlign.center, style: T.heading),
         Text('${money(total)} ${W.currency}', textAlign: TextAlign.center, style: T.total.copyWith(fontSize: 32)),
         Text('فاتورة رقم $no · $items صنف', textAlign: TextAlign.center, style: T.subStrong),
+        if (ministryNo != null) Text('فاتورة الوزارة $ministryNo', textAlign: TextAlign.center, style: T.sub),
         const SizedBox(height: S.m),
         Center(child: SendStatus(outboxKey: 'sales:$id')),
         const SizedBox(height: S.l),
@@ -488,5 +585,70 @@ class SaleDoneScreen extends StatelessWidget {
         ),
       ],
     ),
+  );
+}
+
+class _MinistrySheet extends StatefulWidget {
+  final String no;
+  final int? total;
+  const _MinistrySheet({required this.no, this.total});
+  @override
+  State<_MinistrySheet> createState() => _MinistrySheetState();
+}
+
+class _MinistrySheetState extends State<_MinistrySheet> {
+  late final noCtl = TextEditingController(text: widget.no);
+  late final totalCtl = TextEditingController(text: widget.total == null ? '' : money(widget.total!));
+  String? noError, totalError;
+
+  @override
+  void dispose() {
+    noCtl.dispose();
+    totalCtl.dispose();
+    super.dispose();
+  }
+
+  void _ok() {
+    final no = noCtl.text.replaceAll(RegExp(r'\s'), '');
+    final raw = totalCtl.text.trim().replaceAll(',', '.');
+    final t = raw.isEmpty ? null : double.tryParse(raw);
+    setState(() {
+      noError = !RegExp(r'^[0-9]{4,30}$').hasMatch(no) ? 'اكتب رقم فاتورة الوزارة (أرقام بس)' : null;
+      totalError = raw.isNotEmpty && (t == null || t < 0) ? 'اكتب رقم صحيح' : null;
+    });
+    if (noError != null || totalError != null) return;
+    Navigator.pop(context, (no, t == null ? null : (t * 1000).round()));
+  }
+
+  @override
+  Widget build(BuildContext context) => Column(
+    mainAxisSize: MainAxisSize.min,
+    crossAxisAlignment: CrossAxisAlignment.stretch,
+    children: [
+      const Text('فاتورة الوزارة', style: T.heading),
+      const Text('اكتب «رقم الفاتورة» اللي في فاتورة صرف المواد المدعومة، والإجمالي علشان الجهاز يقارن.', style: T.sub),
+      const SizedBox(height: S.s),
+      TextField(
+        key: const Key('ministry_no'),
+        controller: noCtl,
+        autofocus: true,
+        keyboardType: TextInputType.number,
+        maxLength: 30,
+        style: T.heading,
+        textDirection: TextDirection.ltr,
+        textInputAction: TextInputAction.next,
+        decoration: InputDecoration(labelText: 'رقم فاتورة الوزارة', errorText: noError, counterText: ''),
+      ),
+      TextField(
+        key: const Key('ministry_total'),
+        controller: totalCtl,
+        keyboardType: const TextInputType.numberWithOptions(decimal: true),
+        textInputAction: TextInputAction.done,
+        onSubmitted: (_) => _ok(),
+        decoration: InputDecoration(labelText: 'إجمالي الفاتورة (${W.currency}) — اختياري', errorText: totalError),
+      ),
+      const SizedBox(height: S.s),
+      BigButton('ابدأ البيع', icon: Icons.play_arrow, onPressed: _ok),
+    ],
   );
 }

@@ -174,7 +174,14 @@ def push_sale(db: Session, device: Device, data: dict):
     if not lines:
         raise SyncError("empty_sale")
     emp = _employee_id(db, data.get("employee_id"))
+    mtotal = data.get("ministry_total")
+    try:
+        mtotal = d3(mtotal) if mtotal not in (None, "") else None
+    except Exception:
+        mtotal = None
     sale = Sale(id=data["id"], device_id=device.id, employee_id=emp, device_no=_small_int(data.get("device_no")),
+                ministry_invoice_no="".join(str(data.get("ministry_invoice_no") or "").split())[:30] or None,
+                ministry_total=mtotal if mtotal is None or mtotal >= 0 else None,
                 created_at=_parse_time(data.get("created_at")), total=0)
     stock = []
     for ln in lines:
@@ -635,4 +642,26 @@ def supplier_statement(db: Session, supplier, start: date, end: date):
     return {"opening": d3(opening), "rows": rows, "payments": pay_inside, "billed": d3(total_billed),
             "paid": d3(total_paid), "closing": d3(opening + total_billed - total_paid), "pending": pending,
             "estimated": any(x["estimated"] and x["r"].supplier_invoice_total is None for x in rows)}
+
+
+# ---------- Ministry ration invoices ----------
+
+def ministry_flags(db: Session, sales) -> dict:
+    """Per sale id: problems with its ministry invoice. "duplicate" = the same ministry invoice was sold more
+    than once (any day, any device); "total" = the total on the ministry invoice differs from the sale;
+    "missing" = no ministry invoice number."""
+    nos = {s.ministry_invoice_no for s in sales if s.ministry_invoice_no}
+    counts = dict(db.execute(select(Sale.ministry_invoice_no, func.count()).where(Sale.ministry_invoice_no.in_(nos))
+                             .group_by(Sale.ministry_invoice_no)).all()) if nos else {}
+    out = {}
+    for s in sales:
+        f = []
+        if not s.ministry_invoice_no:
+            f.append("missing")
+        elif counts.get(s.ministry_invoice_no, 0) > 1:
+            f.append("duplicate")
+        if s.ministry_total is not None and s.ministry_total != s.total:
+            f.append("total")
+        out[s.id] = f
+    return out
 

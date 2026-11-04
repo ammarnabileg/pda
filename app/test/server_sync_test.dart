@@ -50,6 +50,7 @@ void main() {
       await db.enqueue('sales', saleId, {
         'id': saleId,
         'employee_id': ahmad.id,
+        'ministry_invoice_no': '168126059405',
         'created_at': DateTime.now().toUtc().toIso8601String(),
         'lines': [
           {'product_id': rice.id, 'mode': 'carton', 'qty': '1.000', 'unit_price': money(rice.unitPrice('carton'))},

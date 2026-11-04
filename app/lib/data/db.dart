@@ -332,6 +332,25 @@ class LocalDb {
     ];
   }
 
+  /// A sale on this device (last 60 days) that delivered this ministry ration invoice, if any.
+  Future<HistoryEntry?> saleForMinistryInvoice(String no) async {
+    final r = await db.query(
+      'history',
+      where: "kind = 'sales' AND data LIKE ?",
+      whereArgs: ['%"mi":${jsonEncode(no)}%'],
+      orderBy: 'at DESC',
+      limit: 1,
+    );
+    return r.isEmpty
+        ? null
+        : HistoryEntry(
+            r.first['id'] as String,
+            r.first['kind'] as String,
+            DateTime.parse(r.first['at'] as String),
+            jsonDecode(r.first['data'] as String) as Map<String, dynamic>,
+          );
+  }
+
   /// The device's own running number per kind (sales, counts): 1, 2, 3 ... Survives syncs and re-pairing.
   Future<int> nextSerial(String kind) => db.transaction((txn) async {
     final key = 'serial_$kind';
