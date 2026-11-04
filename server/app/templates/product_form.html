@@ -58,7 +58,6 @@
   <fieldset>
     <legend>٤. الرصيد وحد الطلب</legend>
     <div class="grid">
-      {% if not p %}<div class="{{ fcls('stock') }}"><label for="stock">الرصيد الحالي (<span class="base-unit">حبة</span>)</label><input id="stock" name="stock" value="{{ v('stock', '0') }}" inputmode="decimal" dir="ltr">{{ err('stock') }}</div>{% endif %}
       <div class="{{ fcls('min_stock') }}"><label for="min_stock">حد الطلب (<span class="base-unit">حبة</span>)</label><input id="min_stock" name="min_stock" value="{{ v('min_stock', '0') }}" inputmode="decimal" dir="ltr">{{ err('min_stock') }}<div class="hint">لما الرصيد يوصل له، الصنف بيظهر في «تحت حد الطلب»</div></div>
     </div>
   </fieldset>
@@ -71,11 +70,7 @@
 
 {% if p %}
 <h2>الرصيد: {{ base_text(p, p.stock) }}</h2>
-{% if user.can('stock_adjust') %}<form method="post" action="/products/{{ p.id }}/stock" class="card bar">
-  <div style="flex:1;min-width:150px"><label for="nstock">الرصيد الصحيح ({{ 'كجم' if p.unit == 'kg' else 'حبة' }})</label><input id="nstock" name="stock" inputmode="decimal" dir="ltr" required></div>
-  <div style="flex:2;min-width:200px"><label for="note">السبب</label><input id="note" name="note" placeholder="مثال: تالف، هدية، تصحيح" required></div>
-  <button class="btn light" style="align-self:end">تعديل الرصيد يدوياً</button>
-</form>{% endif %}
+<p class="muted">الرصيد مابيتعدلش من هنا. بيتغيّر بس بالبيع، أو سند استلام، أو جرد معتمد، أو تصحيح فاتورة أو سند أو جرد بسبب. كل حركة متسجلة تحت.</p>
 {% if prices is defined %}{% from "_prices.html" import price_cell %}
 <h2>سجل الأسعار</h2>
 <div class="table-wrap" style="max-height:320px"><table><thead><tr><th class="num">م</th><th>الوقت</th><th>سعر البيع</th><th>سعر الشراء</th><th>مين</th></tr></thead>

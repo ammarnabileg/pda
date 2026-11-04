@@ -2,8 +2,8 @@
 {% block content %}
 {% from "_macros.html" import icon %}
 <div class="bar"><h1>الأصناف</h1>
-  <a class="btn light" href="/products-import">استيراد من ملف CSV</a>
-  <a class="btn" href="/products/new">+ صنف جديد</a></div>
+  <a class="btn light admin-only" href="/products-import">استيراد من ملف CSV</a>
+  <a class="btn admin-only" href="/products/new">+ صنف جديد</a></div>
 <form class="bar card" method="get">
   <div style="flex:2;min-width:220px"><label for="q">بحث</label><input id="q" name="q" value="{{ q }}" placeholder="الاسم أو أي باركود (حبة أو كرتون)" autofocus></div>
   <div><label for="status">الحالة</label><select id="status" name="status">
@@ -26,7 +26,7 @@
 <td class="num">{{ p.price|money }}{% if p.carton %}<div class="muted" style="font-size:13px">كرتون {{ (p.price * p.carton)|money }}</div>{% endif %}</td>
 <td class="num">{{ p.cost|money }}</td>
 <td class="num">{% if is_low %}<span class="neg">{{ icon('warn') }} {{ p.stock|qty(p.unit) }}</span><div style="font-size:12px" class="neg">تحت حد الطلب</div>{% else %}{{ p.stock|qty(p.unit) }}{% endif %}</td>
-<td><a class="btn small light" href="/products/{{ p.id }}">تعديل</a></td></tr>
+<td><a class="btn small light" href="/products/{{ p.id }}">{{ 'تعديل' if user.is_admin else 'عرض' }}</a></td></tr>
 {% endfor %}
 </table></div>
 {% if pages > 1 %}
@@ -39,6 +39,6 @@
 {% elif filtered %}
 <div class="card empty">مفيش أصناف بالبحث ده.<br><a class="btn light" href="/products">مسح الفلاتر</a></div>
 {% else %}
-<div class="card empty">لسه مفيش أصناف.<br><a class="btn" href="/products/new">+ أضف صنف</a><a class="btn light" href="/products-import">استورد ملف</a></div>
+<div class="card empty">لسه مفيش أصناف.<br><a class="btn admin-only" href="/products/new">+ أضف صنف</a><a class="btn light admin-only" href="/products-import">استورد ملف</a></div>
 {% endif %}
 {% endblock %}

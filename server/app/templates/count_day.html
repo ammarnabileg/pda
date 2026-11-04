@@ -19,7 +19,7 @@
 <td>{% if r.diff == 0 %}<span class="zero">مطابق</span>{% elif r.diff < 0 %}<span class="neg">ناقص {{ base_text(r.p, -r.diff) }}</span>{% else %}<span class="pos">زيادة {{ base_text(r.p, r.diff) }}</span>{% endif %}</td></tr>
 {% else %}<tr><td colspan="6" class="muted">مفيش أصناف</td></tr>{% endfor %}</table></div>
 {% if waiting %}
-<div class="card no-print" style="margin-top:14px">
+<div class="card no-print admin-only" style="margin-top:14px">
   <p><b>اعتماد الجرد كله:</b> {{ waiting|length }} لجنة مستنية. الأرصدة هتتعدّل بالمجموع، وقيمة الفرق بسعر الشراء {{ value|money }} د.ك.</p>
   <form method="post" action="/counts/day/{{ day }}/approve" onsubmit="return confirm('اعتماد {{ waiting|length }} لجنة مع بعض وتعديل الأرصدة؟{% if during %}\n\nتنبيه: فيه {{ during|length }} فاتورة اتعملت وقت الجرد.{% endif %}')"><button class="btn">اعتماد كل اللجان وتعديل الأرصدة</button></form>
 </div>{% endif %}

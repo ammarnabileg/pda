@@ -89,12 +89,24 @@ class Forbidden(Exception):
     pass
 
 
+class ReadOnly(Forbidden):
+    """Anyone but the admin may only view and print."""
+
+
+def is_edit_page(path: str) -> bool:
+    """Pages that are only a form for changing data (new, edit, corrections, import)."""
+    return (path.endswith("/new") or path.endswith("/edit") or path.startswith("/products-import")
+            or (path.startswith("/accounting/") and path != "/accounting/log"))
+
+
 def current_user(request: Request, db: Session = Depends(get_db)) -> Employee:
     uid = request.session.get("uid")
     user = db.get(Employee, uid) if uid else None
     if not user or not user.active or not user.can_dashboard:
         raise LoginRequired()
     request.state.user = user
+    if not user.is_admin and (request.method != "GET" or is_edit_page(request.url.path)):
+        raise ReadOnly()
     services.set_actor(db, f"emp:{user.id}")  # recorded by the audit log for anything this request changes
     return user
 
@@ -110,6 +122,12 @@ def _needs(perm: str):
 
 # One dependency per dashboard permission; every page except home asks for one.
 need = {p: _needs(p) for p in PERMISSIONS}
+
+
+def admin_only(user: Employee = Depends(current_user)) -> Employee:
+    if not user.is_admin:
+        raise ReadOnly()
+    return user
 
 
 def local_day_range(d_from: date, d_to: date):
@@ -345,7 +363,7 @@ def form_ctx(p, form, errors=None, moves=None, **extra):
 
 @router.get("/products/new", response_class=HTMLResponse)
 def product_new(request: Request, user=Depends(need["products"])):
-    return render(request, "product_form.html", form_ctx(None, {"unit": "piece", "active": "1", "carton": "0", "cost": "0", "min_stock": "0", "stock": "0"}))
+    return render(request, "product_form.html", form_ctx(None, {"unit": "piece", "active": "1", "carton": "0", "cost": "0", "min_stock": "0"}))
 
 
 @router.post("/products/new")
@@ -353,19 +371,14 @@ async def product_create(request: Request, user=Depends(need["products"]), db: S
     f = await request.form()
     extra = form_barcodes(f)
     errors = product_errors(db, None, f, extra)
-    opening = dec(f.get("stock") or 0)
-    if opening is None or opening < 0:
-        errors["stock"] = "الرصيد الافتتاحي لازم يكون رقم"
     if errors:
         return render(request, "product_form.html", form_ctx(None, f, errors), 400)
     p = Product(stock=0)
     db.add(p)
     apply_product_form(db, p, f, extra)
     services.bump(db, p)
-    db.flush()
-    services.move_stock(db, p, opening, "manual", note="رصيد افتتاحي", employee_id=user.id)
     db.commit()
-    flash(request, f"تمت إضافة {p.name}")
+    flash(request, f"تمت إضافة {p.name}. رصيده 0: الرصيد بييجي من سند استلام أو جرد")
     return redirect("/products/new" if f.get("next") == "new" else f"/products/{p.id}")
 
 
@@ -399,22 +412,8 @@ async def product_update(pid: int, request: Request, user=Depends(need["products
     return redirect(f"/products/{pid}")
 
 
-@router.post("/products/{pid}/stock")
-async def product_stock(pid: int, request: Request, user=Depends(need["stock_adjust"]), db: Session = Depends(get_db)):
-    p = db.get(Product, pid)
-    f = await request.form()
-    new = dec(f.get("stock"))
-    note = str(f.get("note", "")).strip()
-    if not p or new is None or new < 0 or not note:
-        flash(request, "اكتب الرصيد الجديد وسبب التعديل", "error")
-        return redirect(f"/products/{pid}")
-    services.move_stock(db, p, new - p.stock, "manual", note=note[:200], employee_id=user.id)
-    db.commit()
-    flash(request, "تم تعديل الرصيد")
-    return redirect(f"/products/{pid}")
-
-
-IMPORT_COLUMNS = ["barcode", "name", "unit", "price", "cost", "carton", "stock", "min_stock", "carton_barcode", "extra_barcodes"]
+# No stock column: stock only changes through sales, vouchers, approved counts and corrections with a reason.
+IMPORT_COLUMNS = ["barcode", "name", "unit", "price", "cost", "carton", "min_stock", "carton_barcode", "extra_barcodes"]
 
 
 @router.get("/products-import", response_class=HTMLResponse)
@@ -425,8 +424,8 @@ def import_form(request: Request, user=Depends(need["products"])):
 @router.get("/products-import/template.csv")
 def import_template(user=Depends(need["products"])):
     body = (",".join(IMPORT_COLUMNS) + "\n"
-            "6281000123456,أرز بسمتي ٥ كجم,piece,2.450,2.050,6,48,10,16281000123453,6281000123999\n"
-            "2100000012345,سكر أبيض,kg,0.350,0.280,0,125,20,,\n")
+            "6281000123456,أرز بسمتي ٥ كجم,piece,2.450,2.050,6,10,16281000123453,6281000123999\n"
+            "2100000012345,سكر أبيض,kg,0.350,0.280,0,20,,\n")
     return Response("﻿" + body, media_type="text/csv; charset=utf-8",
                     headers={"Content-Disposition": "attachment; filename=products-template.csv"})
 
@@ -459,9 +458,6 @@ async def import_products(request: Request, user=Depends(need["products"]), db: 
         if existing:  # keep barcodes the file does not mention
             extra = [(b.code, b.mode) for b in existing.extra_barcodes if b.code not in dict(extra)] + extra
         errs = list(product_errors(db, existing.id if existing else None, row, extra).values())
-        stock = dec(row.get("stock")) if row.get("stock") else None
-        if row.get("stock") and (stock is None or stock < 0):
-            errs.append("الرصيد غلط")
         if errs:
             errors.append(f"سطر {n}: " + "، ".join(errs))
             continue
@@ -471,8 +467,6 @@ async def import_products(request: Request, user=Depends(need["products"]), db: 
         apply_product_form(db, p, row, extra)
         services.bump(db, p)
         db.flush()
-        if stock is not None:
-            services.move_stock(db, p, stock - p.stock, "manual", note="استيراد من ملف", employee_id=user.id)
         created, updated = created + (not existing), updated + bool(existing)
     if errors:
         db.rollback()
@@ -984,13 +978,13 @@ async def _correct(request, db, user, kind, obj, rows_fn, apply, back):
 
 
 @router.get("/accounting/sales/{sid}", response_class=HTMLResponse)
-def sale_correct_form(sid: str, request: Request, user=Depends(need["accounting"]), db: Session = Depends(get_db)):
+def sale_correct_form(sid: str, request: Request, user=Depends(admin_only), db: Session = Depends(get_db)):
     s = db.get(Sale, sid)
     return _correct_page(request, "sale", s, _sale_rows(s)) if s else redirect("/sales")
 
 
 @router.post("/accounting/sales/{sid}")
-async def sale_correct(sid: str, request: Request, user=Depends(need["accounting"]), db: Session = Depends(get_db)):
+async def sale_correct(sid: str, request: Request, user=Depends(admin_only), db: Session = Depends(get_db)):
     s = db.get(Sale, sid)
     if not s:
         return redirect("/sales")
@@ -998,7 +992,7 @@ async def sale_correct(sid: str, request: Request, user=Depends(need["accounting
 
 
 @router.get("/accounting/receipts/{rid}", response_class=HTMLResponse)
-def receipt_correct_form(rid: int, request: Request, user=Depends(need["accounting"]), db: Session = Depends(get_db)):
+def receipt_correct_form(rid: int, request: Request, user=Depends(admin_only), db: Session = Depends(get_db)):
     r = db.get(Receipt, rid)
     if not r or r.status != "received":
         return redirect(f"/receipts/{rid}")
@@ -1006,7 +1000,7 @@ def receipt_correct_form(rid: int, request: Request, user=Depends(need["accounti
 
 
 @router.post("/accounting/receipts/{rid}")
-async def receipt_correct(rid: int, request: Request, user=Depends(need["accounting"]), db: Session = Depends(get_db)):
+async def receipt_correct(rid: int, request: Request, user=Depends(admin_only), db: Session = Depends(get_db)):
     r = db.get(Receipt, rid)
     if not r or r.status != "received":
         return redirect(f"/receipts/{rid}")
@@ -1014,7 +1008,7 @@ async def receipt_correct(rid: int, request: Request, user=Depends(need["account
 
 
 @router.get("/accounting/counts/{cid}", response_class=HTMLResponse)
-def count_correct_form(cid: str, request: Request, user=Depends(need["accounting"]), db: Session = Depends(get_db)):
+def count_correct_form(cid: str, request: Request, user=Depends(admin_only), db: Session = Depends(get_db)):
     c = db.get(CountSession, cid)
     if not c or c.status == "rejected":
         return redirect(f"/counts/{cid}")
@@ -1022,7 +1016,7 @@ def count_correct_form(cid: str, request: Request, user=Depends(need["accounting
 
 
 @router.post("/accounting/counts/{cid}")
-async def count_correct(cid: str, request: Request, user=Depends(need["accounting"]), db: Session = Depends(get_db)):
+async def count_correct(cid: str, request: Request, user=Depends(admin_only), db: Session = Depends(get_db)):
     c = db.get(CountSession, cid)
     if not c or c.status == "rejected":
         return redirect(f"/counts/{cid}")
@@ -1208,8 +1202,8 @@ async def employee_save(eid: str, request: Request, user=Depends(need["employees
     active = f.get("active") == "1"
     need_pw = bool(username) and (password != "" or not (e and e.password_hash))
     errors = validate_employee_fields(db, e.id if e else None, name, role, pin, username, password, need_pw)
-    if e and e.id == user.id and (not r or "employees" not in r.perms or "dashboard" not in r.perms or not active):
-        errors.append("مينفعش تشيل من حسابك صلاحية الموظفين أو تدخل اللوحة، أو توقفه")
+    if e and e.id == user.id and (role != ADMIN_ROLE or not active):
+        errors.append("مينفعش تشيل دور المدير من حسابك أو توقفه: المدير بس اللي يقدر يعدّل")
     if errors:
         return render(request, "employee_form.html", {"e": e, "form": f, "errors": errors, "roles": all_roles(db)}, 400)
     if e is None:

@@ -6,7 +6,7 @@
 <title>{% block title %}لوحة التحكم{% endblock %} | تموين</title>
 <link rel="stylesheet" href="/static/style.css">
 </head>
-<body>
+<body class="{{ 'readonly' if user and not user.is_admin }}">
 {% macro icon(name) %}<svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-{{ name }}"/></svg>{% endmacro %}
 <svg width="0" height="0" style="position:absolute" aria-hidden="true">
   <defs>
@@ -58,6 +58,7 @@
     </div>
   </nav>
   <main class="main">
+    {% if user %}<div class="page-tools no-print">{% if not user.is_admin %}<span class="ro-note">عرض وطباعة بس · التعديل للمدير</span>{% endif %}<button type="button" class="btn small light" onclick="print()">طباعة الصفحة</button></div>{% endif %}
     {% if flash %}<div class="alert {{ flash.kind }}" role="status">{{ icon('ok' if flash.kind == 'ok' else 'warn') }} {{ flash.msg }}</div>{% endif %}
     {% block content %}{% endblock %}
   </main>
@@ -65,5 +66,17 @@
 {% else %}
   {% block bare %}{% endblock %}
 {% endif %}
+{% if user and not user.is_admin %}<script>
+// View-only for everyone but the admin. The server refuses any change anyway; this only keeps the page honest.
+function lockForms() { document.querySelectorAll('form').forEach(f => {
+  if (f.method.toLowerCase() !== 'post' || f.action.endsWith('/logout')) return
+  f.querySelectorAll('input, select, textarea, button').forEach(el => { el.disabled = true; if (el.tagName === 'BUTTON') el.hidden = true })
+  if (f.classList.contains('inline') || !f.querySelector('input:not([type=hidden]), select, textarea')) f.hidden = true
+  f.onsubmit = e => e.preventDefault()
+})
+document.querySelectorAll('[form]').forEach(el => el.disabled = true) }
+lockForms()
+addEventListener('load', lockForms)
+</script>{% endif %}
 </body>
 </html>

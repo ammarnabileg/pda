@@ -88,3 +88,9 @@ legend{font-weight:800;padding:0 6px}
 .perm-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:8px 18px;margin-bottom:8px}
 .perm-grid .check{font-weight:600;min-height:40px}
 .btn.danger{color:#b42318;border-color:#f3c0bb}
+.readonly .admin-only{display:none!important}
+.page-tools{display:flex;justify-content:flex-end;align-items:center;gap:10px;margin-bottom:8px}
+.ro-note{font-size:14px;color:var(--muted, #667);background:#f1f3f5;border-radius:8px;padding:4px 10px}
+/* View-only (not admin): no buttons in edit forms, even ones a page script adds later. The server refuses changes anyway. */
+.readonly form[method=post]:not([action="/logout"]) button{display:none!important}
+.readonly form[method=post]:not([action="/logout"]) :is(input,select,textarea),.readonly [form]{pointer-events:none;background:#f3f4f6;color:inherit;opacity:1}

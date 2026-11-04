@@ -75,20 +75,23 @@ def test_role_form_validation(admin_client, db, seed):
     assert admin_client.post("/roles/new", data={"name": "كاشير", "perm": ["sale"]}).status_code == 400  # duplicate name
 
 
-def test_cannot_lock_yourself_out(db, seed):
-    # A non-admin role that manages employees; its holder cannot strip that from their own role or account.
+def test_cannot_lock_yourself_out(admin_client, db, seed):
+    # Only the admin changes anything, so the admin cannot drop the admin role or stop their own account.
+    me = seed["admin"].id
+    assert admin_client.post(f"/employees/{me}", data={"name": "المدير", "role": "supervisor", "active": "1",
+                                                      "username": "admin"}).status_code == 400
+    assert admin_client.post(f"/employees/{me}", data={"name": "المدير", "role": "admin", "username": "admin"}).status_code == 400
+    db.expire_all()
+    assert db.get(Employee, me).role == "admin" and db.get(Employee, me).active
+    # A role that manages employees but is not admin can still only look.
     db.add(Role(key="hr", name="شؤون", permissions="dashboard,employees"))
     salt, h = hash_pin("7777")
-    hr = Employee(name="هبة", role="hr", pin_salt=salt, pin_hash=h, username="hr", password_hash=hash_password("password123"))
-    db.add(hr)
+    db.add(Employee(name="هبة", role="hr", pin_salt=salt, pin_hash=h, username="hr", password_hash=hash_password("password123")))
     db.commit()
     c = TestClient(app)
     c.post("/login", data={"username": "hr", "password": "password123"})
-    assert c.post("/roles/hr", data={"name": "شؤون", "perm": ["dashboard"]}).status_code == 400
-    r = c.post(f"/employees/{hr.id}", data={"name": "هبة", "role": "cashier", "active": "1"})
-    assert r.status_code == 400
-    db.expire_all()
-    assert db.get(Employee, hr.id).role == "hr"
+    assert c.get("/employees").status_code == 200
+    assert c.post(f"/employees/{me}", data={"name": "x", "role": "cashier", "active": "1"}).status_code == 403
 
 
 def test_employee_form_lists_roles(admin_client, seed):

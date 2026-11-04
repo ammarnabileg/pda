@@ -26,11 +26,10 @@ PERMISSIONS = {
     # in the dashboard
     "dashboard": ("دخول لوحة التحكم", "لوحة التحكم"),
     "products": ("الأصناف والموردين والاستيراد", "لوحة التحكم"),
-    "stock_adjust": ("تعديل الرصيد يدوياً", "لوحة التحكم"),
     "receipts": ("سندات الاستلام والموافقة عليها", "لوحة التحكم"),
     "sales": ("المبيعات والتقارير والأرباح", "لوحة التحكم"),
     "counts": ("مراجعة الجرد واعتماده", "لوحة التحكم"),
-    "accounting": ("المحاسبة: تعديل الفواتير والسندات والجرد بعد ما تتقفل، وسجلهم", "لوحة التحكم"),
+    "accounting": ("يشوف سجل الفواتير والسندات والجرد", "لوحة التحكم"),
     "audit": ("السجل الكامل: كل التغييرات والدخول على اللوحة", "لوحة التحكم"),
     "employees": ("الموظفين والأدوار والصلاحيات", "لوحة التحكم"),
     "devices": ("الأجهزة وربطها", "لوحة التحكم"),
@@ -93,6 +92,11 @@ class Employee(Base):
 
     def can(self, perm: str) -> bool:
         return perm in self.perms
+
+    @property
+    def is_admin(self) -> bool:
+        """Only the admin changes anything in the dashboard; every other role views and prints."""
+        return self.role == ADMIN_ROLE
 
     @property
     def role_name(self):

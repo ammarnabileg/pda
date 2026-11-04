@@ -37,12 +37,14 @@ def test_product_create_edit_and_duplicate_barcode(admin_client, seed, db):
                           follow_redirects=False)
     assert r.status_code == 303
     p = db.query(Product).filter_by(barcode="123456").one()
-    assert p.stock == Decimal("24") and p.version > 0
+    assert p.stock == 0 and p.version > 0  # an opening stock sent anyway is ignored: stock comes from vouchers and counts
     r = admin_client.post("/products/new", data={"barcode": "123456", "name": "x", "unit": "piece", "price": "1"})
     assert r.status_code == 400 and "مستخدم" in r.text
-    admin_client.post(f"/products/{p.id}/stock", data={"stock": "20", "note": "تالف"})
+    # Stock cannot be typed in, not even by the admin.
+    assert admin_client.post(f"/products/{p.id}/stock", data={"stock": "20", "note": "تالف"}).status_code in (404, 405)
+    assert "تعديل الرصيد يدوياً" not in admin_client.get(f"/products/{p.id}").text
     db.expire_all()
-    assert db.get(Product, p.id).stock == Decimal("20")
+    assert db.get(Product, p.id).stock == 0
 
 
 def test_csv_import_all_or_nothing(admin_client, seed, db):
@@ -54,7 +56,7 @@ def test_csv_import_all_or_nothing(admin_client, seed, db):
     r = admin_client.post("/products-import", files={"file": ("p.csv", good.encode(), "text/csv")}, follow_redirects=False)
     assert r.status_code == 303
     db.expire_all()
-    assert db.query(Product).filter_by(barcode="111").one().stock == Decimal("10")
+    assert db.query(Product).filter_by(barcode="111").one().stock == 0  # the file's stock column is ignored
     rice = db.query(Product).filter_by(barcode="6281000123456").one()
     assert rice.name == "أرز جديد" and rice.stock == Decimal("48")
 

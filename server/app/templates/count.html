@@ -3,7 +3,7 @@
 {% from "_macros.html" import icon %}
 <div class="bar"><h1>جرد رقم {{ c.no }}{% if c.committee %} · لجنة {{ c.committee }}{% endif %}</h1>
   {% if c.status == 'submitted' %}<span class="pill p-warn">{{ icon('warn') }} مستني المراجعة</span>{% elif c.status == 'approved' %}<span class="pill p-ok">{{ icon('ok') }} معتمد</span>{% else %}<span class="pill p-gray">مرفوض</span>{% endif %}
-  {% if c.status != 'rejected' and user.can('accounting') %}<a class="btn light no-print" href="/accounting/counts/{{ c.id }}">تعديل (المحاسبة)</a>{% endif %}
+  {% if c.status != 'rejected' and user.is_admin %}<a class="btn light no-print" href="/accounting/counts/{{ c.id }}">تعديل (المحاسبة)</a>{% endif %}
   <button class="btn light no-print" onclick="print()">طباعة</button><a class="btn light no-print" href="/counts">رجوع</a></div>
 <div class="card grid">
   <div><small class="muted">تاريخ الجرد · اللجنة</small><br><b>{% if c.count_date %}<a href="/counts/day/{{ c.count_date }}">{{ c.count_date }}</a>{% else %}—{% endif %}</b> · لجنة {{ c.committee or '—' }}</div>
@@ -29,7 +29,7 @@
 {% if c.status == 'submitted' and others %}
 <div class="alert error no-print">فيه {{ others|length }} لجنة تانية في نفس اليوم عدّت أصناف من دي ({% for o in others %}لجنة {{ o.committee or '—' }}{{ '، ' if not loop.last }}{% endfor %}). اعتمد <a href="/counts/day/{{ c.count_date }}">الجرد كله مع بعض</a> علشان الكميات تتجمع.</div>
 {% elif c.status == 'submitted' %}
-<div class="card no-print">
+<div class="card no-print admin-only">
   <p><b>الاعتماد</b> بيعدّل رصيد كل صنف فيه فرق بقيمة الفرق ({{ stats.short + stats.over }} صنف، بقيمة {{ value|money }} د.ك بسعر الشراء). أي بيع حصل بعد وصول الجرد بيتحسب صح.</p>
   <form class="inline" method="post" action="/counts/{{ c.id }}/approve" onsubmit="return confirm('اعتماد الجرد؟\n\nهيتعدّل رصيد {{ stats.short + stats.over }} صنف:\nناقص: {{ stats.short }} · زيادة: {{ stats.over }}\nقيمة الفرق: {{ value|money }} د.ك')"><button class="btn">اعتماد وتعديل الأرصدة</button></form>
   <form class="inline" method="post" action="/counts/{{ c.id }}/reject" onsubmit="return confirm('رفض الجرد؟ الأرصدة مش هتتغير.')"><button class="btn red">رفض</button></form>

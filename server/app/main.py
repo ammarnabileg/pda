@@ -18,6 +18,11 @@ def create_app() -> FastAPI:
     def _login(request: Request, exc):
         return RedirectResponse("/login", status_code=303)
 
+    @app.exception_handler(dashboard.ReadOnly)
+    def _read_only(request: Request, exc):
+        return HTMLResponse("<p dir=rtl style='font:20px sans-serif;padding:30px'>التعديل للمدير بس. تقدر تشوف الصفحات وتطبعها. "
+                            "<a href='javascript:history.back()'>رجوع</a></p>", status_code=403)
+
     @app.exception_handler(dashboard.Forbidden)
     def _forbidden(request: Request, exc):
         return HTMLResponse("<p dir=rtl style='font:20px sans-serif;padding:30px'>معندكش صلاحية للصفحة دي. اطلبها من المدير (الأدوار والصلاحيات). <a href='/'>الرجوع</a></p>", status_code=403)

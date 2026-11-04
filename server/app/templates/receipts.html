@@ -1,6 +1,6 @@
 {% extends "base.html" %}{% block title %}استلام الموردين{% endblock %}
 {% block content %}
-<div class="bar"><h1>استلام الموردين</h1><a class="btn" href="/receipts/new">+ سند استلام جديد</a></div>
+<div class="bar"><h1>استلام الموردين</h1><a class="btn admin-only" href="/receipts/new">+ سند استلام جديد</a></div>
 {% if pending and status != 'pending' %}<div class="alert error"><a href="?status=pending">{{ pending }} سند اتعمل على الأجهزة مستني موافقتك — الأرصدة مش هتزيد قبل الموافقة</a></div>{% endif %}
 <div class="tabs">{% for k, l in [("open", "بانتظار الاستلام"), ("pending", "مستني الموافقة (" ~ pending ~ ")"), ("received", "تم الاستلام"), ("rejected", "مرفوض"), ("cancelled", "ملغي"), ("all", "الكل")] %}<a href="?status={{ k }}" class="{{ 'on' if status == k }}">{{ l }}</a>{% endfor %}</div>
 <div class="table-wrap"><table><tr><th class="num">م</th><th>رقم السند</th><th>المورد</th><th>الأصناف</th><th>أُنشئ</th><th>الحالة</th><th>الفروقات</th></tr>

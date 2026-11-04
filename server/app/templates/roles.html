@@ -1,13 +1,14 @@
 {% extends "base.html" %}{% block title %}الأدوار والصلاحيات{% endblock %}
 {% block content %}
-<div class="bar"><h1>الأدوار والصلاحيات</h1><a class="btn" href="/roles/new">+ دور جديد</a></div>
+<div class="bar"><h1>الأدوار والصلاحيات</h1><a class="btn admin-only" href="/roles/new">+ دور جديد</a></div>
+<p class="alert" style="background:var(--blue-2);color:var(--blue)"><b>التعديل في لوحة التحكم للمدير بس.</b> صلاحيات اللوحة لأي دور تاني معناها إنه <b>يشوف ويطبع</b> الصفحة دي. صلاحيات الجهاز (البيع والجرد والاستلام) شغل عادي على الجهاز.</p>
 <p class="muted">كل موظف ليه دور واحد، والدور بيحدد هو يقدر يعمل إيه على الجهاز وفي لوحة التحكم. لو غيّرت صلاحيات دور، كل الموظفين اللي عليه بيتغيّروا، والأجهزة بتاخد التغيير في أول مزامنة (خلال دقيقة تقريباً).</p>
 <div class="table-wrap"><table><thead><tr><th class="num">م</th><th>الدور</th>{% for g in PERM_GROUPS %}<th>{{ g }}</th>{% endfor %}<th class="num">موظفين</th><th></th></tr></thead>
 {% for r in items %}<tr>
   <td class="num">{{ loop.index }}</td><td><b>{{ r.name }}</b>{% if r.is_system %} <span class="pill p-gray">ثابت</span>{% endif %}</td>
   {% for g, perms in PERM_GROUPS.items() %}<td>{% set ns = namespace(any=false) %}{% for k, l in perms %}{% if k in r.perms %}{% set ns.any = true %}<span class="pill p-ok">{{ l }}</span> {% endif %}{% endfor %}{% if not ns.any %}<span class="muted">—</span>{% endif %}</td>{% endfor %}
   <td class="num">{{ used.get(r.key, 0) }}</td>
-  <td>{% if r.is_system %}<span class="muted">كل الصلاحيات</span>{% else %}<a href="/roles/{{ r.key }}">تعديل</a>{% endif %}</td>
+  <td>{% if r.is_system %}<span class="muted">كل الصلاحيات</span>{% else %}<a href="/roles/{{ r.key }}">{{ 'تعديل' if user.is_admin else 'عرض' }}</a>{% endif %}</td>
 </tr>{% endfor %}
 </table></div>
 <p class="hint">«مدير» دور ثابت وليه كل الصلاحيات دايماً، علشان النظام ميتقفلش على الكل بالغلط.</p>

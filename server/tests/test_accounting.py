@@ -29,26 +29,40 @@ def login_as(db, role, username):
     return c, e
 
 
-def test_only_accounting_can_edit(db, seed, device_client):
-    assert "accounting" in db.get(Role, "accountant").perms
-    assert "accounting" not in db.get(Role, "supervisor").perms
+def test_only_admin_can_change_anything(db, seed, device_client):
     sid = push_sale(device_client, seed)
-    sup, _ = login_as(db, "supervisor", "sup")
-    assert sup.get(f"/sales/{sid}").status_code == 200
-    assert "تعديل (المحاسبة)" not in sup.get(f"/sales/{sid}").text
-    assert sup.get(f"/accounting/sales/{sid}").status_code == 403
-    assert sup.post(f"/accounting/sales/{sid}", data={"reason": "x"}).status_code == 403
-    assert sup.get("/log").status_code == 403
-    acc, _ = login_as(db, "accountant", "acc")
-    assert "تعديل (المحاسبة)" in acc.get(f"/sales/{sid}").text
-    assert acc.get(f"/accounting/sales/{sid}").status_code == 200
+    rid = seed["receipt"].id
+    cid = str(uuid.uuid4())
+    device_client.post("/api/v1/sync/push", json={"counts": [{"id": cid, "employee_id": seed["admin"].id,
+        "finished_at": "2026-11-01T09:00:00Z", "lines": [{"product_id": seed["rice"].id, "counted": 40}]}]})
+    rice = seed["rice"].id
+    for role, user in (("supervisor", "sup"), ("accountant", "acc")):
+        c, _ = login_as(db, role, user)
+        page = c.get(f"/sales/{sid}")
+        assert page.status_code == 200 and "طباعة" in page.text and "تعديل (المحاسبة)" not in page.text
+        assert "عرض وطباعة بس" in page.text
+        for url in (f"/accounting/sales/{sid}", "/receipts/new", f"/receipts/{rid}/edit", "/products/new", "/products-import"):
+            assert c.get(url).status_code == 403, (role, url)
+        for url, data in ((f"/accounting/sales/{sid}", {"reason": "x"}), (f"/products/{rice}", {"name": "x"}),
+                          (f"/receipts/{rid}/cancel", {}),
+                          (f"/counts/{cid}/approve", {}), ("/counts/day/2026-11-01/approve", {}),
+                          ("/suppliers", {"name": "مورد جديد"}), ("/roles/new", {"name": "x", "perm": ["sale"]})):
+            assert c.post(url, data=data, follow_redirects=False).status_code == 403, (role, url)
+    db.expire_all()
+    assert db.get(Product, rice).stock == Decimal("46") and db.get(Product, rice).name == "أرز"  # 48 - 2 sold, nothing else
+    assert db.get(Receipt, rid).status == "open" and db.get(CountSession, cid).status == "submitted"
+    # The accountant still sees the log of sales, vouchers and counts.
+    acc, _ = login_as(db, "accountant", "acc2")
+    assert acc.get("/log").status_code == 200
 
 
 def test_sale_edit_moves_stock_and_is_logged(db, seed, device_client):
     sid = push_sale(device_client, seed)
     db.expire_all()
     assert db.get(Product, seed["rice"].id).stock == Decimal("46")
-    acc, accountant = login_as(db, "accountant", "acc")
+    acc = admin_client = TestClient(app)
+    acc.post("/login", data={"username": "admin", "password": "password123"})
+    accountant = seed["admin"]
     line_id = db.get(Sale, sid).lines[0].id
     # No reason: refused, nothing changes.
     r = acc.post(f"/accounting/sales/{sid}", data={f"q_{line_id}": "1", f"p_{line_id}": "2.000", "reason": ""})
@@ -68,7 +82,7 @@ def test_sale_edit_moves_stock_and_is_logged(db, seed, device_client):
     assert line_log.actor == f"emp:{accountant.id}" and line_log.reason == "فاتورة ورقية"
     assert line_log.changes["qty"] == [2, 1]
     page = acc.get(f"/sales/{sid}").text
-    assert "فاتورة ورقية" in page and "acc" in page
+    assert "فاتورة ورقية" in page and "المدير" in page
     log = acc.get("/log?manual=1").text
     assert "فاتورة ورقية" in log and f"/sales/{sid}" in log
 
@@ -81,7 +95,8 @@ def test_receipt_and_count_corrections(db, seed, device_client):
     assert db.get(Product, seed["rice"].id).stock == Decimal("102")
     # The device's receiving was logged too, under the device.
     assert db.query(AuditLog).filter_by(table_name="receipts", row_id=str(rid), action="UPDATE").first().actor == f"dev:{seed['device'].id}"
-    acc, _ = login_as(db, "accountant", "acc")
+    acc = TestClient(app)
+    acc.post("/login", data={"username": "admin", "password": "password123"})
     lid = db.get(Receipt, rid).lines[0].id
     r = acc.post(f"/accounting/receipts/{rid}", data={f"q_{lid}": "10", "reason": "كرتون اتلقى بعدين"}, follow_redirects=False)
     assert r.status_code == 303
