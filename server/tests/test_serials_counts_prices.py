@@ -106,3 +106,18 @@ def test_price_log(admin_client, db, seed):
     assert "2.600" not in admin_client.get("/prices?q=سكر").text
     csv = admin_client.get("/prices?format=csv")
     assert csv.headers["content-type"].startswith("text/csv") and "2.500" in csv.text
+
+
+def test_day_page_warns_about_sales_during_the_count(device_client, seed, db, admin_client):
+    cid = str(uuid.uuid4())
+    device_client.post("/api/v1/sync/push", json={"counts": [{"id": cid, "employee_id": seed["admin"].id,
+        "started_at": "2026-11-03T06:00:00Z", "finished_at": "2026-11-03T08:00:00Z", "count_date": "2026-11-03",
+        "committee": "1", "lines": [{"product_id": seed["rice"].id, "counted": 45}]}]})
+    page = admin_client.get("/counts/day/2026-11-03").text
+    assert "اتعملت وقت الجرد" not in page
+    # A sale of a counted product during the count (between start and arrival) is flagged ...
+    during = sale(device_client, seed, created="2026-11-03T07:00:00Z")
+    # ... one before the count started is not.
+    sale(device_client, seed, created="2026-11-03T05:00:00Z")
+    page = admin_client.get("/counts/day/2026-11-03").text
+    assert "فيه 1 فاتورة اتعملت وقت الجرد" in page and f"/sales/{during}" in page

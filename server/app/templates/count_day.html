@@ -6,6 +6,11 @@
 <td>{{ s.employee.name if s.employee else '—' }} · {{ s.device.name }}</td><td class="num">{{ s.lines|length }}</td>
 <td>{% if s.status == 'submitted' %}<span class="pill p-warn">بانتظار الاعتماد</span>{% else %}<span class="pill p-ok">معتمد</span>{% endif %}</td></tr>
 {% else %}<tr><td colspan="6" class="muted">مفيش لجان في اليوم ده</td></tr>{% endfor %}</table></div>
+{% if during %}
+<div class="alert error"><b>⚠ فيه {{ during|length }} فاتورة اتعملت وقت الجرد على أصناف اتعدّت.</b> البيع المفروض يقف وقت الجرد. كل فاتورة من دول ممكن تخلّي الرصيد بعد الاعتماد زيادة بكميتها. راجعها قبل الاعتماد، ولو الكمية اتباعت بعد ما الرف اتعد، صلّح المعدود من «تعديل (المحاسبة)».
+<ul>{% for s, names in during[:20] %}<li><a href="/sales/{{ s.id }}">فاتورة {{ s.no }}</a> · {{ s.created_at|dt }} · {{ s.device.name }} · {{ names|join('، ') }}</li>{% endfor %}</ul>
+{% if during|length > 20 %}و{{ during|length - 20 }} فاتورة تانية.{% endif %}</div>
+{% endif %}
 <div class="alert" style="background:var(--blue-2);color:var(--blue)">لو صنف اتعد في أكتر من لجنة (مثلاً على رفين)، الكميات بتتجمع. «في النظام» هو الرصيد وقت ما آخر لجنة عدّته وصلت للسيرفر.</div>
 <div class="table-wrap"><table><thead><tr><th class="num">م</th><th>الصنف</th><th>اللجان</th><th class="num">المعدود (المجموع)</th><th class="num">في النظام</th><th>الفرق</th></tr></thead>
 {% for r in rows %}<tr><td class="num">{{ loop.index }}</td><td>{{ r.p.name }}</td>
@@ -16,6 +21,6 @@
 {% if waiting %}
 <div class="card no-print" style="margin-top:14px">
   <p><b>اعتماد الجرد كله:</b> {{ waiting|length }} لجنة مستنية. الأرصدة هتتعدّل بالمجموع، وقيمة الفرق بسعر الشراء {{ value|money }} د.ك.</p>
-  <form method="post" action="/counts/day/{{ day }}/approve" onsubmit="return confirm('اعتماد {{ waiting|length }} لجنة مع بعض وتعديل الأرصدة؟')"><button class="btn">اعتماد كل اللجان وتعديل الأرصدة</button></form>
+  <form method="post" action="/counts/day/{{ day }}/approve" onsubmit="return confirm('اعتماد {{ waiting|length }} لجنة مع بعض وتعديل الأرصدة؟{% if during %}\n\nتنبيه: فيه {{ during|length }} فاتورة اتعملت وقت الجرد.{% endif %}')"><button class="btn">اعتماد كل اللجان وتعديل الأرصدة</button></form>
 </div>{% endif %}
 {% endblock %}

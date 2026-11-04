@@ -762,7 +762,8 @@ def count_day_page(day: str, request: Request, user=Depends(need["counts"]), db:
                      "waiting": bool(waiting)})
     rows.sort(key=lambda r: (r["diff"] == 0, r["p"].name))
     value = sum((r["diff"] * r["p"].cost for r in rows if r["waiting"]), Decimal(0))
-    return render(request, "count_day.html", {"day": d, "sessions": sessions, "rows": rows, "value": value,
+    during = services.sales_during_count(db, sessions, set(products))
+    return render(request, "count_day.html", {"day": d, "sessions": sessions, "rows": rows, "value": value, "during": during,
                                               "waiting": [s for s in sessions if s.status == "submitted"]})
 
 

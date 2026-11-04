@@ -511,3 +511,21 @@ def price_history(db: Session, product_id: int | None = None, start=None, end=No
         out.append({"e": e, "product_id": int(e.row_id), "price": pair("price"), "cost": pair("cost")})
     return out
 
+
+def sales_during_count(db: Session, sessions, product_ids) -> list:
+    """Sales of counted products made while the stocktake was running (first count started .. last count reached
+    the server). Selling is supposed to stop during a count: each of these can make the approved stock wrong
+    by its quantity, so the day page lists them before approval. Times are the devices' clocks."""
+    if not sessions or not product_ids:
+        return []
+    start = min(s.started_at or s.finished_at for s in sessions)
+    end = max(s.synced_at for s in sessions)
+    q = (select(Sale).join(SaleLine).where(Sale.created_at >= start, Sale.created_at <= end,
+                                           SaleLine.product_id.in_(product_ids))
+         .distinct().order_by(Sale.created_at))
+    out = []
+    for sale in db.scalars(q):
+        names = sorted({l.product.name for l in sale.lines if l.product_id in product_ids})
+        out.append((sale, names))
+    return out
+
