@@ -1,9 +1,12 @@
+import 'dart:convert';
+
 import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
+import 'package:tamween_pda/util/photo.dart';
 import 'package:tamween_pda/data/app_state.dart';
 import 'package:tamween_pda/data/db.dart';
 import 'package:tamween_pda/main.dart';
@@ -583,6 +586,22 @@ void main() {
     await tester.tap(find.text('مورد جديد: مورد جديد'));
     await settle(tester);
     expect(find.text('مورد جديد — هيتضاف للوحة التحكم'), findsOneWidget);
+    // The supplier's invoice number comes next, before any item.
+    await waitFor(tester, find.byKey(const Key('invoice_no')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('متابعة'));
+    await tester.pumpAndSettle();
+    expect(find.text('رقم فاتورة الشركة مطلوب'), findsOneWidget);
+    await tester.enterText(find.byKey(const Key('invoice_no')), 'F-2041');
+    await tester.enterText(find.byKey(const Key('invoice_total')), '44.1');
+    await tester.tap(find.text('متابعة'));
+    await settle(tester);
+    expect(find.text('فاتورة الشركة رقم F-2041'), findsOneWidget);
+    // A photo of the invoice (the camera is faked in tests).
+    takeInvoicePhoto = () async => (Uint8List.fromList(List.filled(300, 7)), 'image/jpeg');
+    await tester.tap(find.bySemanticsLabel('صوّر الفاتورة'));
+    await settle(tester);
+    expect(find.textContaining('1 صورة'), findsOneWidget);
     // A carton barcode starts the pad on cartons.
     await scan(tester, '16281000123453');
     await settle(tester);
@@ -602,6 +621,12 @@ void main() {
     expect(out.single['kind'], 'new_receipts');
     expect(out.single['payload'].toString(), contains('"supplier_name":"مورد جديد"'));
     expect(out.single['payload'].toString(), contains('"mode":"carton","qty":"3.000"'));
+    expect(out.single['payload'].toString(), contains('"supplier_invoice_no":"F-2041"'));
+    expect(out.single['payload'].toString(), contains('"supplier_invoice_total":"44.100"'));
+    final files = (await tester.runAsync(() => app.db.pendingOutbox(files: true)))!;
+    expect(files.single['kind'], 'receipt_files');
+    expect(files.single['payload'].toString(), contains('"receipt_client_id":"${jsonDecode(out.single['payload'] as String)['id']}"'));
+    expect(await tester.runAsync(() => app.db.getJson('draft_new_receipt_photos')), isNull);
     final hist = (await tester.runAsync(() => app.db.history('receipts')))!;
     expect(hist.single.kind, 'new_receipts');
     expect(await tester.runAsync(() => app.db.getJson('draft_new_receipt')), isNull);

@@ -208,7 +208,33 @@ class AppState extends ChangeNotifier {
         if (key != null) await db.rejectOutbox(key, r['reason'].toString());
         if (r['type'] == 'receipts') await db.db.delete('receipts', where: 'id = ?', whereArgs: [r['id']]);
       }
-      if (rows.length < 50) return;
+      if (rows.length < 50) break;
+    }
+    await _pushFiles();
+  }
+
+  /// Invoice photos, one at a time, after the vouchers they belong to.
+  Future<void> _pushFiles() async {
+    for (final r in await db.pendingOutbox(limit: 20, files: true)) {
+      final body = jsonDecode(r['payload'] as String) as Map<String, dynamic>;
+      final voucherKey = 'new_receipts:${body['receipt_client_id']}';
+      final voucher = await db.db.query('outbox', where: 'id = ?', whereArgs: [voucherKey]);
+      if (voucher.isNotEmpty && voucher.first['state'] == 'rejected') {
+        await db.rejectOutbox(r['id'] as String, 'receipt_rejected');
+        continue;
+      }
+      try {
+        final done = await api.uploadReceiptFile(
+          body['receipt_client_id'] as String,
+          body['file_id'] as String,
+          base64Decode(body['data'] as String),
+          body['content_type'] as String,
+        );
+        if (done) await db.removeOutbox(r['id'] as String);
+      } on ApiException catch (e) {
+        if (!e.code.startsWith('rejected:')) rethrow;
+        await db.rejectOutbox(r['id'] as String, 'bad_file');
+      }
     }
   }
 

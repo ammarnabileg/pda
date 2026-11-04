@@ -4,12 +4,12 @@ from datetime import date, datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 from decimal import ROUND_HALF_UP, Decimal
 
-from sqlalchemy import or_, select, text, update
+from sqlalchemy import func, or_, select, text, update
 from sqlalchemy.orm import Session
 
 from .db import next_version
 from .models import (
-    AuditLog, CountLine, CountSession, Device, Employee, Product, ProductBarcode, Receipt, ReceiptLine, Sale, SaleLine, Supplier,
+    AuditLog, CountLine, CountSession, Device, Employee, Product, ReceiptFile, SupplierPayment, ProductBarcode, Receipt, ReceiptLine, Sale, SaleLine, Supplier,
     StockMove, now,
 )
 
@@ -243,6 +243,7 @@ def push_receipt(db: Session, device: Device, data: dict):
     for line in r.lines:
         if line.received is None:
             line.received, line.received_mode = Decimal(0), line.mode
+        line.unit_cost = line.product.cost
         move_stock(db, line.product, line.received_base, "receipt", ref=f"R-{r.id}", employee_id=emp)
     r.status = "received"
     r.received_at = _parse_time(data.get("received_at"))
@@ -271,7 +272,18 @@ def push_new_receipt(db: Session, device: Device, data: dict):
             db.add(sup)
             db.flush()
     emp = _employee_id(db, data.get("employee_id"))
+    inv_no = str(data.get("supplier_invoice_no") or "").strip()[:60] or None
+    if inv_no and invoice_taken(db, sup.id, inv_no):
+        raise SyncError("duplicate_invoice")
+    total = data.get("supplier_invoice_total")
+    try:
+        total = d3(total) if total not in (None, "") else None
+    except Exception:
+        total = None
+    if total is not None and total < 0:
+        total = None
     r = Receipt(supplier_id=sup.id, status="pending", client_id=cid, device_id=device.id, received_by=emp,
+                supplier_invoice_no=inv_no, supplier_invoice_total=total,
                 received_at=_parse_time(data.get("received_at")), note="سند من الجهاز (من غير سند مسبق)",
                 device_notes=(data.get("notes") or "").strip()[:500] or None)
     db.add(r)
@@ -298,6 +310,7 @@ def approve_receipt(db: Session, r: Receipt, user_id: int, quantities: dict | No
             line.received = line.ordered = d3(q)
     db.flush()
     for line in r.lines:
+        line.unit_cost = line.product.cost
         move_stock(db, line.product, line.received_base, "receipt", ref=f"R-{r.id}", employee_id=user_id)
     r.status = "received"
     r.approved_by, r.approved_at = user_id, now()
@@ -402,6 +415,8 @@ def correct_receipt(db: Session, r: Receipt, changes: dict, user_id: int, reason
         delta = line.product.to_base(q, mode) - line.product.to_base(old, mode)
         move_stock(db, line.product, delta, "edit", ref=f"R-{r.id}", employee_id=user_id, note=reason)
         line.received, line.received_mode = q, mode
+        if line.unit_cost is None:
+            line.unit_cost = line.product.cost
         n += 1
     if n:
         bump(db, r)
@@ -528,4 +543,96 @@ def sales_during_count(db: Session, sessions, product_ids) -> list:
         names = sorted({l.product.name for l in sale.lines if l.product_id in product_ids})
         out.append((sale, names))
     return out
+
+
+# ---------- Supplier invoices, their photos, payments and the supplier statement ----------
+
+def invoice_taken(db: Session, supplier_id: int, invoice_no: str, except_id: int | None = None) -> Receipt | None:
+    q = select(Receipt).where(Receipt.supplier_id == supplier_id, Receipt.supplier_invoice_no.is_not(None),
+                              func.lower(Receipt.supplier_invoice_no) == invoice_no.strip().lower(),
+                              Receipt.status.not_in(("cancelled", "rejected")))
+    if except_id:
+        q = q.where(Receipt.id != except_id)
+    return db.scalar(q.limit(1))
+
+
+ALLOWED_FILES = {"image/jpeg": ".jpg", "image/png": ".png", "image/webp": ".webp", "application/pdf": ".pdf"}
+
+
+def save_receipt_file(db: Session, r: Receipt, data: bytes, content_type: str, employee_id=None, device_id=None,
+                      client_id=None) -> ReceiptFile:
+    """Store an invoice photo/scan under FILES_DIR/invoices/<voucher id>/. Same client_id twice = one file."""
+    import secrets
+    from pathlib import Path
+
+    from . import config
+
+    if client_id:
+        old = db.scalar(select(ReceiptFile).where(ReceiptFile.client_id == client_id))
+        if old:
+            return old
+    ext = ALLOWED_FILES.get((content_type or "").split(";")[0].strip().lower())
+    if not ext:
+        raise EditError("الملف لازم يكون صورة (JPG أو PNG) أو PDF")
+    if not data:
+        raise EditError("الملف فاضي")
+    if len(data) > config.MAX_UPLOAD_MB * 1024 * 1024:
+        raise EditError(f"الملف أكبر من {config.MAX_UPLOAD_MB} ميجا")
+    rel = f"invoices/{r.id}/{secrets.token_hex(8)}{ext}"
+    path = Path(config.FILES_DIR) / rel
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(data)
+    f = ReceiptFile(receipt_id=r.id, filename=rel, content_type=content_type.split(";")[0].strip().lower(), size=len(data),
+                    uploaded_by=employee_id, device_id=device_id, client_id=client_id)
+    db.add(f)
+    return f
+
+
+def receipt_value(r: Receipt):
+    """(value at purchase price, estimated?) of what was received. Lines from before purchase prices were kept
+    on vouchers use the product's current purchase price and make the value an estimate."""
+    total, estimated = Decimal(0), False
+    for line in r.lines:
+        base = line.received_base or Decimal(0)
+        cost = line.unit_cost
+        if cost is None:
+            cost, estimated = line.product.cost, estimated or base != 0
+        total += base * cost
+    return d3(total), estimated
+
+
+def supplier_statement(db: Session, supplier, start: date, end: date):
+    """Supplier statement for [start, end] (local dates): what was received and billed, what was paid,
+    and the balance carried in from before and left at the end. Balance > 0 = the co-op owes the supplier."""
+    from datetime import time as dtime
+
+    begin = datetime.combine(start, dtime.min, LOCAL_TZ)
+    stop = datetime.combine(end + timedelta(days=1), dtime.min, LOCAL_TZ)
+
+    def billed(r):
+        value, est = receipt_value(r)
+        return (r.supplier_invoice_total if r.supplier_invoice_total is not None else value), value, est
+
+    received = db.scalars(select(Receipt).where(Receipt.supplier_id == supplier.id, Receipt.status == "received")
+                          .order_by(Receipt.received_at, Receipt.id)).all()
+    when = lambda r: r.received_at or r.approved_at or r.created_at  # noqa: E731
+    before = [r for r in received if when(r) < begin]
+    inside = [r for r in received if begin <= when(r) < stop]
+    pays = db.scalars(select(SupplierPayment).where(SupplierPayment.supplier_id == supplier.id)
+                      .order_by(SupplierPayment.paid_on, SupplierPayment.id)).all()
+    pay_before = sum((p.amount for p in pays if p.paid_on < start), Decimal(0))
+    pay_inside = [p for p in pays if start <= p.paid_on <= end]
+    opening = sum((billed(r)[0] for r in before), Decimal(0)) - pay_before
+    rows = []
+    for r in inside:
+        amount, value, est = billed(r)
+        rows.append({"r": r, "at": when(r), "amount": amount, "value": value, "estimated": est,
+                     "diff": (r.supplier_invoice_total - value) if r.supplier_invoice_total is not None else None})
+    total_billed = sum((x["amount"] for x in rows), Decimal(0))
+    total_paid = sum((p.amount for p in pay_inside), Decimal(0))
+    pending = db.scalar(select(func.count()).select_from(Receipt).where(
+        Receipt.supplier_id == supplier.id, Receipt.status.in_(("open", "pending"))))
+    return {"opening": d3(opening), "rows": rows, "payments": pay_inside, "billed": d3(total_billed),
+            "paid": d3(total_paid), "closing": d3(opening + total_billed - total_paid), "pending": pending,
+            "estimated": any(x["estimated"] and x["r"].supplier_invoice_total is None for x in rows)}
 

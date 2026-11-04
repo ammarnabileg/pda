@@ -1,0 +1,79 @@
+{% extends "base.html" %}
+{% set clear = st.closing == 0 %}
+{% block title %}{{ 'براءة ذمة' if clear else 'كشف حساب' }} {{ s.name }}{% endblock %}
+{% block content %}
+<div class="bar no-print"><h1>{{ s.name }}: {{ 'كشف حساب تفصيلي' if view == 'detail' else 'كشف حساب إجمالي' }}</h1>
+  <a class="btn light" href="?d_from={{ d_from }}&d_to={{ d_to }}&format=csv">تنزيل Excel (CSV)</a>
+  <a class="btn light" href="/suppliers">رجوع</a></div>
+<form class="card bar no-print" method="get">
+  <div><label for="d_from">من</label><input type="date" id="d_from" name="d_from" value="{{ d_from }}"></div>
+  <div><label for="d_to">إلى</label><input type="date" id="d_to" name="d_to" value="{{ d_to }}"></div>
+  <div><label for="view">النوع</label><select id="view" name="view"><option value="summary" {{ 'selected' if view == 'summary' }}>إجمالي</option><option value="detail" {{ 'selected' if view == 'detail' }}>تفصيلي (كل سند وأصنافه)</option></select></div>
+  <button class="btn" style="align-self:end">عرض</button>
+</form>
+{% if st.pending %}<div class="alert error no-print">فيه {{ st.pending }} سند للشركة دي لسه ماتستلمش أو مستني موافقة. مش داخلين في الحساب لحد ما يتستلموا.</div>{% endif %}
+{% if st.estimated %}<div class="alert error no-print">فيه سندات قديمة من غير إجمالي فاتورة ومن غير سعر شراء وقت الاستلام: قيمتها محسوبة بسعر الشراء الحالي وممكن تكون مختلفة. اكتب إجمالي الفاتورة في السند علشان الرقم يبقى مظبوط.</div>{% endif %}
+
+<div class="card">
+  <div class="statement-head">
+    <div><b>{{ COOP_NAME }}</b><br><span class="muted">تاريخ الطباعة: {{ today }}</span></div>
+    <div style="text-align:center"><h2 style="margin:0">{{ 'براءة ذمة' if clear else 'كشف حساب' }}{{ ' تفصيلي' if view == 'detail' }}</h2><span class="muted">من {{ d_from }} إلى {{ d_to }}</span></div>
+    <div style="text-align:left"><b>{{ s.name }}</b>{% if s.phone %}<br><span dir="ltr">{{ s.phone }}</span>{% endif %}</div>
+  </div>
+  <div class="stats" style="margin-top:14px">
+    <div class="stat"><small>رصيد أول المدة</small><b>{{ st.opening|money }}</b></div>
+    <div class="stat"><small>بضاعة مستلمة ({{ st.rows|length }} سند)</small><b>{{ st.billed|money }}</b></div>
+    <div class="stat"><small>مدفوعات ({{ st.payments|length }})</small><b>{{ st.paid|money }}</b></div>
+    <div class="stat"><small>الرصيد في {{ d_to }}</small><b class="{{ 'neg' if st.closing > 0 else 'zero' if clear else 'pos' }}">{{ st.closing|money }}</b> د.ك</div>
+  </div>
+  <p style="font-size:18px;margin:14px 0">
+  {% if clear %}<b>تشهد {{ COOP_NAME }} و«{{ s.name }}» بأنه لا توجد أي مستحقات مالية لأي طرف على الآخر حتى تاريخ {{ d_to }}.</b>
+  {% elif st.closing > 0 %}<b>المتبقي لـ«{{ s.name }}» على {{ COOP_NAME }} حتى {{ d_to }}: {{ st.closing|money }} د.ك</b>
+  {% else %}<b>مدفوع لـ«{{ s.name }}» زيادة عن البضاعة المستلمة حتى {{ d_to }}: {{ (0 - st.closing)|money }} د.ك</b>{% endif %}
+  </p>
+
+  <div class="table-wrap" style="max-height:none"><table><thead><tr><th class="num">م</th><th>التاريخ</th><th>البيان</th><th>رقم فاتورة الشركة</th><th class="num">بضاعة (عليه)</th><th class="num">مدفوع (له)</th><th class="num">الرصيد</th></tr></thead>
+  <tr><td></td><td>{{ d_from }}</td><td>رصيد أول المدة</td><td></td><td></td><td></td><td class="num">{{ st.opening|money }}</td></tr>
+  {% for l in lines %}<tr><td class="num">{{ loop.index }}</td><td>{{ l.date }}</td>
+    <td>{% if l.row %}<a href="/receipts/{{ l.row.r.id }}">{{ l.text }}</a>{% else %}{{ l.text }}{% if l.pay.note %}<div class="muted" style="font-size:14px">{{ l.pay.note }}</div>{% endif %}{% endif %}</td>
+    <td dir="ltr">{{ l.invoice }}</td><td class="num">{{ l.debit|money if l.debit else '' }}</td><td class="num">{{ l.credit|money if l.credit else '' }}</td><td class="num"><b>{{ l.balance|money }}</b></td></tr>
+  {% endfor %}
+  <tr><th colspan="4">الإجمالي</th><th class="num">{{ st.billed|money }}</th><th class="num">{{ st.paid|money }}</th><th class="num">{{ st.closing|money }}</th></tr>
+  </table></div>
+
+  {% if view == 'detail' %}
+  {% for row in st.rows %}{% set r = row.r %}
+  <h2>سند {{ r.id }} · فاتورة الشركة <span dir="ltr">{{ r.supplier_invoice_no or '—' }}</span> · {{ row.at|dt }}</h2>
+  <div class="table-wrap" style="max-height:none"><table><thead><tr><th class="num">م</th><th>الصنف</th><th>المطلوب</th><th>المستلم</th><th>الفرق</th><th class="num">سعر الشراء</th><th class="num">القيمة</th></tr></thead>
+  {% for l in r.lines %}{% set cost = l.unit_cost if l.unit_cost is not none else l.product.cost %}
+  <tr><td class="num">{{ loop.index }}</td><td>{{ l.product.name }}{% if l.note %}<div class="muted" style="font-size:14px">{{ l.note }}</div>{% endif %}</td>
+    <td>{% if l.extra %}—{% else %}{{ l.ordered|qty(l.product.unit) }} {{ MODES[l.mode] }}{% endif %}</td>
+    <td>{{ (l.received or 0)|qty(l.product.unit) }} {{ MODES[l.received_mode or l.mode] }}</td>
+    <td>{% set d = l.diff_base %}{% if d is none or d == 0 %}<span class="zero">مطابق</span>{% elif d < 0 %}<span class="neg">ناقص {{ base_text(l.product, -d) }}</span>{% else %}<span class="pos">زيادة {{ base_text(l.product, d) }}</span>{% endif %}</td>
+    <td class="num">{{ cost|money }}{% if l.unit_cost is none %}*{% endif %}</td><td class="num">{{ ((l.received_base or 0) * cost)|money }}</td></tr>
+  {% endfor %}
+  <tr><th colspan="6">قيمة المستلم بسعر الشراء</th><th class="num">{{ row.value|money }}</th></tr>
+  {% if r.supplier_invoice_total is not none %}<tr><th colspan="6">إجمالي فاتورة الشركة (المحسوب في الكشف)</th><th class="num">{{ r.supplier_invoice_total|money }}</th></tr>
+  {% if row.diff %}<tr><th colspan="6">الفرق بين الفاتورة والمستلم</th><th class="num neg">{{ row.diff|money }}</th></tr>{% endif %}{% endif %}
+  </table></div>
+  {% if r.files %}<div class="invoice-files">{% for f in r.files if f.content_type.startswith('image/') %}<img src="/receipts/{{ r.id }}/files/{{ f.id }}" alt="فاتورة سند {{ r.id }}">{% endfor %}</div>{% endif %}
+  {% endfor %}
+  {% if st.estimated %}<p class="muted">* سعر الشراء الحالي، لأن السند اتستلم قبل ما السيستم يحفظ سعر الشراء وقت الاستلام.</p>{% endif %}
+  {% endif %}
+
+  <div class="signs"><div>توقيع وختم {{ COOP_NAME }}</div><div>توقيع وختم مندوب «{{ s.name }}»</div></div>
+</div>
+
+{% if user.is_admin %}
+<form method="post" action="/suppliers/{{ s.id }}/payments" class="card bar no-print" style="margin-top:14px">
+  <input type="hidden" name="d_from" value="{{ d_from }}"><input type="hidden" name="d_to" value="{{ d_to }}"><input type="hidden" name="view" value="{{ view }}">
+  <div><label>المبلغ (د.ك)</label><input name="amount" inputmode="decimal" dir="ltr" required></div>
+  <div><label>التاريخ</label><input type="date" name="paid_on" value="{{ today }}" required></div>
+  <div><label>الطريقة</label><select name="method">{% for k, l in methods.items() %}<option value="{{ k }}">{{ l }}</option>{% endfor %}</select></div>
+  <div><label>رقم الشيك أو التحويل</label><input name="reference" dir="ltr"></div>
+  <div style="flex:1;min-width:160px"><label>ملاحظة</label><input name="note" placeholder="لو المبلغ بالسالب (تصحيح) اكتب السبب"></div>
+  <button class="btn" style="align-self:end">تسجيل دفعة</button>
+</form>
+<p class="muted no-print">الدفعات مابتتمسحش. لو دفعة اتسجلت غلط، سجّل دفعة بنفس المبلغ بالسالب واكتب السبب. الاتنين بيفضلوا في الكشف والسجل.</p>
+{% endif %}
+{% endblock %}

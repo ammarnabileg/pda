@@ -3,6 +3,8 @@ import os
 os.environ["DATABASE_URL"] = os.environ.get(
     "TEST_DATABASE_URL", "postgresql+psycopg://postgres:postgres@localhost:5432/pda_test")
 os.environ["SECRET_KEY"] = "test-secret"
+import tempfile  # noqa: E402
+os.environ["FILES_DIR"] = tempfile.mkdtemp(prefix="tamween-files-")
 
 import pytest  # noqa: E402
 from fastapi.testclient import TestClient  # noqa: E402

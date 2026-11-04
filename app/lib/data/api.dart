@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:http/http.dart' as http;
+import 'package:http_parser/http_parser.dart' show MediaType;
 
 class ApiException implements Exception {
   final String code; // offline | unpaired | bad_code | server | not_tamween
@@ -68,6 +69,36 @@ class Api {
     () => _client.get(Uri.parse('$baseUrl/api/v1/sync/pull?since=$since'), headers: _headers),
     timeout: const Duration(seconds: 60),
   );
+
+  /// Photo of a supplier invoice for a voucher made on this device. Returns false while the server does not
+  /// know the voucher yet (it was not uploaded yet); throws 'rejected:file' if the server refuses the file.
+  Future<bool> uploadReceiptFile(String receiptClientId, String fileId, List<int> bytes, String contentType) async {
+    final req = http.MultipartRequest('POST', Uri.parse('$baseUrl/api/v1/receipt-file'))
+      ..headers.addAll({if (token != null) 'Authorization': 'Bearer $token'})
+      ..fields['receipt_client_id'] = receiptClientId
+      ..fields['file_id'] = fileId
+      ..files.add(http.MultipartFile.fromBytes('file', bytes, filename: '$fileId.jpg', contentType: _mediaType(contentType)));
+    http.Response r;
+    try {
+      r = await http.Response.fromStream(await _client.send(req).timeout(const Duration(seconds: 60)));
+    } on TimeoutException {
+      throw ApiException('offline');
+    } on SocketException {
+      throw ApiException('offline');
+    } on http.ClientException {
+      throw ApiException('offline');
+    }
+    if (r.statusCode == 401) throw ApiException('unpaired');
+    if (r.statusCode == 404) return false;
+    if (r.statusCode == 422) throw ApiException('rejected:file');
+    if (r.statusCode != 200) throw ApiException('server');
+    return true;
+  }
+
+  static MediaType _mediaType(String ct) {
+    final parts = ct.split('/');
+    return MediaType(parts.first, parts.length > 1 ? parts[1] : 'octet-stream');
+  }
 
   Future<Map<String, dynamic>> push(Map<String, Object?> payload) => _send(
     () => _client.post(Uri.parse('$baseUrl/api/v1/sync/push'), headers: _headers, body: jsonEncode(payload)),

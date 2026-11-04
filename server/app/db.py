@@ -117,6 +117,12 @@ UPGRADES = [
             END $$""",
         f"CREATE UNIQUE INDEX IF NOT EXISTS {table}_no ON {table} (no)",
       )],
+    "ALTER TABLE receipts ADD COLUMN IF NOT EXISTS supplier_invoice_no VARCHAR(60)",
+    "ALTER TABLE receipts ADD COLUMN IF NOT EXISTS supplier_invoice_total NUMERIC(12, 3)",
+    "ALTER TABLE receipt_lines ADD COLUMN IF NOT EXISTS unit_cost NUMERIC(12, 3)",
+    # The same supplier invoice cannot be recorded twice (a cancelled or rejected voucher frees its number).
+    """CREATE UNIQUE INDEX IF NOT EXISTS receipts_supplier_invoice ON receipts (supplier_id, lower(supplier_invoice_no))
+       WHERE supplier_invoice_no IS NOT NULL AND status NOT IN ('cancelled', 'rejected')""",
     "UPDATE count_sessions SET count_date = (finished_at AT TIME ZONE 'Asia/Kuwait')::date WHERE count_date IS NULL",
 ]
 
@@ -124,7 +130,8 @@ UPGRADES = [
 # Sales, vouchers, counts and stock moves are never deleted, whatever the code or a user tries.
 # Enforced inside PostgreSQL so a bug, a new page or a manual DELETE cannot remove them.
 # Only lines of a voucher that is still "open" (not received yet) may be replaced while editing it.
-PROTECTED_TABLES = ["sales", "sale_lines", "receipts", "count_sessions", "count_lines", "stock_moves"]
+PROTECTED_TABLES = ["sales", "sale_lines", "receipts", "count_sessions", "count_lines", "stock_moves",
+                    "receipt_files", "supplier_payments"]
 # Every table with business data, and what is logged. Lines are logged when changed or removed; a new line
 # is part of its parent's creation. stock_moves is itself a permanent log, so it is not copied.
 AUDITED_TABLES = {
@@ -134,6 +141,7 @@ AUDITED_TABLES = {
     "products": "INSERT OR UPDATE OR DELETE", "product_barcodes": "INSERT OR UPDATE OR DELETE",
     "suppliers": "INSERT OR UPDATE OR DELETE", "employees": "INSERT OR UPDATE OR DELETE",
     "roles": "INSERT OR UPDATE OR DELETE", "devices": "INSERT OR UPDATE OR DELETE",
+    "receipt_files": "INSERT OR UPDATE OR DELETE", "supplier_payments": "INSERT OR UPDATE OR DELETE",
 }
 # Columns that change all the time on their own (stock has its own log in stock_moves; last_seen is the heartbeat).
 AUDIT_NOISE = ["version", "stock", "last_seen", "updated_at"]

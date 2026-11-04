@@ -188,6 +188,10 @@ class Receipt(Base):
     supplier_id: Mapped[int] = mapped_column(ForeignKey("suppliers.id"))
     status: Mapped[str] = mapped_column(String(12), default="open")  # open, received, cancelled
     note: Mapped[str | None] = mapped_column(Text)
+    # The supplier's own invoice: its number (asked first, never twice for the same supplier) and its total,
+    # which is what the supplier statement bills. Empty only on vouchers from before these fields existed.
+    supplier_invoice_no: Mapped[str | None] = mapped_column(String(60))
+    supplier_invoice_total: Mapped[Decimal | None] = mapped_column(Money)
     # Set when the voucher was made on a device for a delivery that had none (idempotent upload).
     client_id: Mapped[str | None] = mapped_column(String(40), unique=True)
     # Device-made vouchers wait for a supervisor (status "pending") before stock changes.
@@ -205,6 +209,7 @@ class Receipt(Base):
     lines: Mapped[list["ReceiptLine"]] = relationship(
         back_populates="receipt", cascade="all, delete-orphan", order_by="ReceiptLine.id"
     )
+    files: Mapped[list["ReceiptFile"]] = relationship(back_populates="receipt", order_by="ReceiptFile.id")
 
 
 class ReceiptLine(Base):
@@ -218,6 +223,8 @@ class ReceiptLine(Base):
     received_mode: Mapped[str | None] = mapped_column(String(10))
     extra: Mapped[bool] = mapped_column(Boolean, default=False)
     note: Mapped[str | None] = mapped_column(String(200))  # written on the device, e.g. "3 علب تالفة"
+    # Purchase price per piece (or kg) when the line was received, so old vouchers keep their value.
+    unit_cost: Mapped[Decimal | None] = mapped_column(Money)
     receipt: Mapped[Receipt] = relationship(back_populates="lines")
     product: Mapped[Product] = relationship()
 
@@ -325,3 +332,38 @@ class AuditLog(Base):
     row_id: Mapped[str] = mapped_column(String(64))
     action: Mapped[str] = mapped_column(String(20))
     changes: Mapped[dict] = mapped_column(JSONB)
+
+
+class ReceiptFile(Base):
+    """A photo or scan of the supplier's invoice. The file lives in config.FILES_DIR; it is never deleted."""
+    __tablename__ = "receipt_files"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    receipt_id: Mapped[int] = mapped_column(ForeignKey("receipts.id"), index=True)
+    filename: Mapped[str] = mapped_column(String(120))  # path inside FILES_DIR
+    content_type: Mapped[str] = mapped_column(String(60))
+    size: Mapped[int] = mapped_column(Integer)
+    uploaded_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+    uploaded_by: Mapped[int | None] = mapped_column(ForeignKey("employees.id"))
+    device_id: Mapped[int | None] = mapped_column(ForeignKey("devices.id"))
+    client_id: Mapped[str | None] = mapped_column(String(60), unique=True)  # retry-safe uploads from devices
+    receipt: Mapped[Receipt] = relationship(back_populates="files")
+
+
+PAYMENT_METHODS = {"cash": "نقدي", "cheque": "شيك", "transfer": "تحويل بنكي", "other": "أخرى"}
+
+
+class SupplierPayment(Base):
+    """Money paid to a supplier. Together with received vouchers it makes the supplier statement."""
+    __tablename__ = "supplier_payments"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    supplier_id: Mapped[int] = mapped_column(ForeignKey("suppliers.id"), index=True)
+    amount: Mapped[Decimal] = mapped_column(Money)
+    paid_on: Mapped[date] = mapped_column(Date, index=True)
+    method: Mapped[str] = mapped_column(String(20), default="cash")
+    reference: Mapped[str | None] = mapped_column(String(80))  # cheque or transfer number
+    note: Mapped[str | None] = mapped_column(Text)
+    created_by: Mapped[int | None] = mapped_column(ForeignKey("employees.id"))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+    supplier: Mapped[Supplier] = relationship()
+    creator: Mapped[Employee | None] = relationship()
+

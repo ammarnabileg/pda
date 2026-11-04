@@ -1,8 +1,11 @@
+import 'dart:convert';
+
 import 'package:flutter/material.dart';
 
 import '../data/models.dart';
 import '../util/format.dart';
 import '../util/ids.dart';
+import '../util/photo.dart';
 import 'history_screen.dart';
 import 'receive_screen.dart' show noteChips;
 import 'scan_helpers.dart';
@@ -28,7 +31,11 @@ class NewReceiptScreen extends StatefulWidget {
 
 class _NewReceiptScreenState extends State<NewReceiptScreen> {
   static const _draftKey = 'draft_new_receipt';
+  static const _photosKey = 'draft_new_receipt_photos';
   String? id;
+  // The supplier's own invoice, asked right after the supplier and before any item.
+  String? invoiceNo, invoiceTotal;
+  final photos = <Map<String, Object?>>[]; // {'id', 'ct', 'data' (base64)}
   int? supplierId;
   String supplierName = '';
   final lines = <_Line>[];
@@ -49,14 +56,47 @@ class _NewReceiptScreenState extends State<NewReceiptScreen> {
       id = d['id'] as String?;
       supplierId = d['sid'] as int?;
       supplierName = (d['sname'] as String?) ?? '';
+      invoiceNo = d['inv'] as String?;
+      invoiceTotal = d['inv_total'] as String?;
       for (final j in (d['lines'] as List)) {
         lines.add(_Line(j['p'] as int, j['q'] as int, j['m'] as String, j['n'] as String?));
       }
       products.addAll(await db.productsByIds(lines.map((l) => l.productId)));
       lines.removeWhere((l) => !products.containsKey(l.productId));
     }
+    final ph = await db.getJson(_photosKey);
+    if (ph is List) photos.addAll(ph.cast<Map<String, dynamic>>());
     if (mounted) setState(() => loaded = true);
-    if (supplierName.isEmpty && mounted) WidgetsBinding.instance.addPostFrameCallback((_) => _pickSupplier());
+    if (!mounted) return;
+    if (supplierName.isEmpty) {
+      WidgetsBinding.instance.addPostFrameCallback((_) => _pickSupplier());
+    } else if (invoiceNo == null) {
+      WidgetsBinding.instance.addPostFrameCallback((_) => _askInvoice());
+    }
+  }
+
+  /// Supplier invoice number (required) and total, before anything is scanned.
+  Future<bool> _askInvoice() async {
+    final r = await showAppSheet<(String, String?)>(context, _InvoiceSheet(no: invoiceNo ?? '', total: invoiceTotal ?? ''));
+    if (r == null || !mounted) return invoiceNo != null;
+    setState(() {
+      invoiceNo = r.$1;
+      invoiceTotal = r.$2;
+    });
+    await _save();
+    return true;
+  }
+
+  Future<void> _photo() async {
+    if (photos.length >= 6) {
+      toast(context, 'كفاية 6 صور للفاتورة الواحدة');
+      return;
+    }
+    final shot = await takeInvoicePhoto();
+    if (shot == null || !mounted) return;
+    setState(() => photos.add({'id': uuid4(), 'ct': shot.$2, 'data': base64Encode(shot.$1)}));
+    await AppScope.read(context).db.setJson(_photosKey, photos);
+    if (mounted) toast(context, 'تم حفظ صورة الفاتورة (${photos.length})');
   }
 
   Future<void> _save() {
@@ -65,6 +105,8 @@ class _NewReceiptScreenState extends State<NewReceiptScreen> {
       'id': id,
       'sid': supplierId,
       'sname': supplierName,
+      'inv': invoiceNo,
+      'inv_total': invoiceTotal,
       'lines': [for (final l in lines) l.toJson()],
     });
   }
@@ -81,11 +123,14 @@ class _NewReceiptScreenState extends State<NewReceiptScreen> {
       supplierId = r.$1;
       supplierName = r.$2;
     });
-    _save();
+    await _save();
+    if (invoiceNo == null && mounted) await _askInvoice();
   }
 
   Future<void> _onProduct(ScanHit? h) async {
     if (h == null || !mounted) return;
+    if (invoiceNo == null && !await _askInvoice()) return;
+    if (!mounted) return;
     final p = h.product;
     products[p.id] = p;
     final existing = lines.where((l) => l.productId == p.id).firstOrNull;
@@ -180,10 +225,16 @@ class _NewReceiptScreenState extends State<NewReceiptScreen> {
 
   Future<void> _finish() async {
     if (supplierName.isEmpty) return _pickSupplier();
+    if (invoiceNo == null && !await _askInvoice()) return;
+    if (!mounted) return;
     final ok = await confirmSheet(
       context,
       title: 'تأكيد الاستلام؟',
-      body: Text('المورد: $supplierName\n${lines.length} صنف.\nالسند هيروح للمشرف يوافق عليه من لوحة التحكم، والرصيد هيزيد بعد موافقته.'),
+      body: Text(
+        'المورد: $supplierName\nفاتورة الشركة: $invoiceNo${invoiceTotal != null ? ' · $invoiceTotal ${W.currency}' : ''}\n'
+        '${lines.length} صنف · ${photos.isEmpty ? 'من غير صورة للفاتورة' : '${photos.length} صورة للفاتورة'}.\n'
+        'السند هيروح للمدير يوافق عليه من لوحة التحكم، والرصيد هيزيد بعد موافقته.',
+      ),
       yes: 'نعم، تأكيد',
     );
     if (!ok || !mounted) return;
@@ -194,15 +245,28 @@ class _NewReceiptScreenState extends State<NewReceiptScreen> {
       'id': rid,
       'supplier_id': supplierId,
       'supplier_name': supplierName,
+      'supplier_invoice_no': invoiceNo,
+      'supplier_invoice_total': ?invoiceTotal,
       'employee_id': app.employee?.id,
       'received_at': DateTime.now().toUtc().toIso8601String(),
       'lines': [
         for (final l in lines) {'product_id': l.productId, 'mode': l.mode, 'qty': money(l.qty), if (l.note != null) 'note': l.note},
       ],
     });
+    // The photos go up after the voucher (the server needs the voucher first).
+    for (final ph in photos) {
+      await app.db.enqueue('receipt_files', '${ph['id']}', {
+        'receipt_client_id': rid,
+        'file_id': ph['id'],
+        'content_type': ph['ct'],
+        'data': ph['data'],
+      });
+    }
     // No local stock change: the supervisor approves the voucher first.
     await app.db.addHistory('new_receipts', rid, {
       'supplier': supplierName,
+      'invoice_no': invoiceNo,
+      'photos': photos.length,
       'employee': app.employee?.name,
       'diffs': 0,
       'lines': [
@@ -217,6 +281,7 @@ class _NewReceiptScreenState extends State<NewReceiptScreen> {
       ],
     });
     await app.db.set(_draftKey, null);
+    await app.db.set(_photosKey, null);
     await app.recordSaved();
     if (!mounted) return;
     Navigator.of(context).pushReplacement(
@@ -237,6 +302,8 @@ class _NewReceiptScreenState extends State<NewReceiptScreen> {
     );
     if (!ok || !mounted) return;
     await AppScope.read(context).db.set(_draftKey, null);
+    if (!mounted) return;
+    await AppScope.read(context).db.set(_photosKey, null);
     if (mounted) Navigator.of(context).pop();
   }
 
@@ -259,6 +326,17 @@ class _NewReceiptScreenState extends State<NewReceiptScreen> {
                   controls: IconBox(Icons.edit_outlined, label: 'تغيير المورد', onPressed: _pickSupplier),
                   onTap: _pickSupplier,
                 ),
+                if (supplierName.isNotEmpty)
+                  ItemRow(
+                    key: const Key('invoice'),
+                    title: invoiceNo == null ? 'اكتب رقم فاتورة الشركة' : 'فاتورة الشركة رقم $invoiceNo',
+                    details: Text(
+                      '${invoiceTotal != null ? 'الإجمالي $invoiceTotal ${W.currency} · ' : ''}'
+                      '${photos.isEmpty ? 'مفيش صورة لسه' : '${photos.length} صورة'}',
+                    ),
+                    controls: IconBox(Icons.photo_camera_outlined, label: 'صوّر الفاتورة', onPressed: _photo),
+                    onTap: _askInvoice,
+                  ),
                 if (lines.isEmpty)
                   ScanPrompt(title: 'امسح أول صنف وصل', sub: 'بعد كل مسح اكتب الكمية اللي وصلت', onType: type, onSearch: search)
                 else
@@ -302,7 +380,7 @@ class _NewReceiptScreenState extends State<NewReceiptScreen> {
           BigButton(
             'تأكيد الاستلام (${lines.length} صنف)',
             icon: Icons.check,
-            onPressed: lines.isEmpty || supplierName.isEmpty ? null : _finish,
+            onPressed: lines.isEmpty || supplierName.isEmpty || invoiceNo == null ? null : _finish,
           ),
         ],
       ),
@@ -463,5 +541,67 @@ class _Done extends StatelessWidget {
         ),
       ],
     ),
+  );
+}
+
+class _InvoiceSheet extends StatefulWidget {
+  final String no, total;
+  const _InvoiceSheet({required this.no, required this.total});
+  @override
+  State<_InvoiceSheet> createState() => _InvoiceSheetState();
+}
+
+class _InvoiceSheetState extends State<_InvoiceSheet> {
+  late final noCtl = TextEditingController(text: widget.no);
+  late final totalCtl = TextEditingController(text: widget.total);
+  String? noError, totalError;
+
+  @override
+  void dispose() {
+    noCtl.dispose();
+    totalCtl.dispose();
+    super.dispose();
+  }
+
+  void _ok() {
+    final no = noCtl.text.trim();
+    final raw = totalCtl.text.trim().replaceAll(',', '.');
+    final total = raw.isEmpty ? null : double.tryParse(raw);
+    setState(() {
+      noError = no.isEmpty ? 'رقم فاتورة الشركة مطلوب' : null;
+      totalError = raw.isNotEmpty && (total == null || total < 0) ? 'اكتب رقم صحيح' : null;
+    });
+    if (noError != null || totalError != null) return;
+    Navigator.pop(context, (no, total?.toStringAsFixed(3)));
+  }
+
+  @override
+  Widget build(BuildContext context) => Column(
+    mainAxisSize: MainAxisSize.min,
+    crossAxisAlignment: CrossAxisAlignment.stretch,
+    children: [
+      const Text('فاتورة الشركة', style: T.heading),
+      const Text('اكتب رقم الفاتورة اللي جت مع البضاعة. نفس الرقم مايتسجلش مرتين.', style: T.sub),
+      const SizedBox(height: S.s),
+      TextField(
+        key: const Key('invoice_no'),
+        controller: noCtl,
+        autofocus: true,
+        maxLength: 60,
+        style: T.heading,
+        textInputAction: TextInputAction.next,
+        decoration: InputDecoration(labelText: 'رقم فاتورة الشركة', errorText: noError, counterText: ''),
+      ),
+      TextField(
+        key: const Key('invoice_total'),
+        controller: totalCtl,
+        keyboardType: const TextInputType.numberWithOptions(decimal: true),
+        textInputAction: TextInputAction.done,
+        onSubmitted: (_) => _ok(),
+        decoration: InputDecoration(labelText: 'إجمالي الفاتورة (${W.currency}) — اختياري', errorText: totalError),
+      ),
+      const SizedBox(height: S.s),
+      BigButton('متابعة', icon: Icons.arrow_back, onPressed: _ok),
+    ],
   );
 }

@@ -1,3 +1,6 @@
 tamween.jks
 tamween.jks.b64
 *.jks
+
+# Invoice photos (real supplier documents) never go into git
+server/files/

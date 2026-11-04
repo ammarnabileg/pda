@@ -14,6 +14,30 @@
   {% if r.approved_at %}<div><small class="muted">{{ 'وافق عليه' if r.status == 'received' else 'رفضه' }}</small><br>{{ r.approver.name if r.approver else '—' }} · {{ r.approved_at|dt }}</div>{% endif %}
 </div>
 {% if r.note %}<p><b>ملاحظة:</b> {{ r.note }}</p>{% endif %}
+<div class="card">
+  <h2 style="margin-top:0">فاتورة الشركة</h2>
+  <div class="grid">
+    <div><small class="muted">رقم فاتورة الشركة</small><br><b dir="ltr">{{ r.supplier_invoice_no or '—' }}</b>{% if not r.supplier_invoice_no %} <span class="pill p-warn">ناقص</span>{% endif %}</div>
+    <div><small class="muted">إجمالي الفاتورة</small><br><b>{{ (r.supplier_invoice_total|money ~ ' د.ك') if r.supplier_invoice_total is not none else '—' }}</b></div>
+    {% if value is not none %}<div><small class="muted">قيمة المستلم بسعر الشراء{{ ' (تقريبية)' if value_estimated }}</small><br><b>{{ value|money }} د.ك</b>
+      {% if r.supplier_invoice_total is not none and r.supplier_invoice_total != value %}<br><span class="pill p-red">فرق {{ (r.supplier_invoice_total - value)|money }} د.ك عن الفاتورة</span>{% endif %}</div>{% endif %}
+    <div><small class="muted">المورد</small><br><a href="/suppliers/{{ r.supplier_id }}/statement">كشف حساب {{ r.supplier.name }}</a></div>
+  </div>
+  {% if r.files %}<div class="invoice-files">{% for f in r.files %}<a href="/receipts/{{ r.id }}/files/{{ f.id }}" target="_blank" rel="noopener">{% if f.content_type.startswith('image/') %}<img src="/receipts/{{ r.id }}/files/{{ f.id }}" alt="صورة فاتورة {{ loop.index }}" loading="lazy">{% else %}<span class="pill p-info">PDF {{ loop.index }}</span>{% endif %}</a>{% endfor %}</div>
+  {% else %}<p class="muted">مفيش صورة من فاتورة الشركة.</p>{% endif %}
+  {% if user.is_admin %}<details class="no-print"><summary>تعديل بيانات الفاتورة أو رفع صورة</summary>
+    <form method="post" action="/receipts/{{ r.id }}/invoice" class="bar" style="margin-top:8px">
+      <div><label>رقم فاتورة الشركة</label><input name="supplier_invoice_no" value="{{ r.supplier_invoice_no or '' }}" required dir="ltr"></div>
+      <div><label>إجمالي الفاتورة</label><input name="supplier_invoice_total" value="{{ (r.supplier_invoice_total|money) if r.supplier_invoice_total is not none else '' }}" inputmode="decimal" dir="ltr"></div>
+      <div style="flex:1;min-width:160px"><label>السبب (للسجل)</label><input name="reason" placeholder="مثال: الرقم اتكتب غلط"></div>
+      <button class="btn light" style="align-self:end">حفظ</button>
+    </form>
+    <form method="post" action="/receipts/{{ r.id }}/files" enctype="multipart/form-data" class="bar" style="margin-top:8px">
+      <div style="flex:1"><label>صورة أو PDF</label><input name="files" type="file" accept="image/*,application/pdf" multiple required></div>
+      <button class="btn light" style="align-self:end">رفع</button>
+    </form>
+  </details>{% endif %}
+</div>
 {% if r.status == 'pending' %}
 <div class="card no-print" style="border-color:var(--red)">
   <h2 style="margin-top:0">السند ده اتعمل على جهاز {{ r.device.name if r.device else '' }} من غير سند مسبق</h2>

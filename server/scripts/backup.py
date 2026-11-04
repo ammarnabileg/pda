@@ -21,7 +21,8 @@ from urllib.parse import unquote, urlsplit
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from app import config  # noqa: E402
 
-TABLES = ["products", "sales", "sale_lines", "employees", "receipts", "count_sessions", "stock_moves"]
+TABLES = ["products", "sales", "sale_lines", "employees", "receipts", "count_sessions", "stock_moves",
+          "supplier_payments", "receipt_files"]
 
 
 class BackupError(Exception):
@@ -72,6 +73,26 @@ def restore_test(dump, c, env, admin_env, admin_user):
         subprocess.run(base + [f"DROP DATABASE IF EXISTS {scratch}"], env=admin_env, capture_output=True)
 
 
+def copy_files(src: Path, dst: Path):
+    """Invoice photos are not in the database. They are never changed or deleted, so a mirror is enough:
+    copy what is new, then check every file is there with the same size."""
+    if not src.exists():
+        return 0, 0
+    copied = total = 0
+    for f in src.rglob("*"):
+        if not f.is_file():
+            continue
+        total += 1
+        target = dst / f.relative_to(src)
+        if not target.exists() or target.stat().st_size != f.stat().st_size:
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(f, target)
+            copied += 1
+        if target.stat().st_size != f.stat().st_size:
+            raise BackupError(f"copy of {f} is incomplete")
+    return copied, total
+
+
 def admin_login(c):
     """A login that may create the scratch database: env, then setup's saved superuser, then the app user."""
     if os.environ.get("PG_ADMIN_USER"):
@@ -114,6 +135,8 @@ def main():
         if missing:
             raise BackupError(f"backup has no data section for: {', '.join(missing)}")
         detail = f"{out.stat().st_size // 1024} KB"
+        new, total = copy_files(Path(config.FILES_DIR), out_dir / "files")
+        detail += f", invoice files {total} ({new} new)"
         if args.restore_test:
             admin_user, admin_pw = admin_login(c)
             admin_env = {**os.environ, "PGPASSWORD": admin_pw}

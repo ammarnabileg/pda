@@ -41,7 +41,7 @@ def test_sales_counts_receipts_and_moves_cannot_be_deleted(device_client, seed, 
 def test_open_voucher_lines_can_be_edited_but_closed_ones_cannot(admin_client, device_client, seed, db):
     rid = seed["receipt"].id
     # Editing an open voucher replaces its lines: allowed.
-    r = admin_client.post(f"/receipts/{rid}/edit", data={"supplier_id": seed["supplier"].id, "product": [seed["rice"].barcode],
+    r = admin_client.post(f"/receipts/{rid}/edit", data={"supplier_id": seed["supplier"].id, "supplier_invoice_no": "K-1", "product": [seed["rice"].barcode],
                                                          "mode": ["piece"], "qty": ["5"]}, follow_redirects=False)
     assert r.status_code == 303
     db.expire_all()

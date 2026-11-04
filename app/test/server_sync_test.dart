@@ -1,3 +1,4 @@
+import 'dart:convert';
 // End-to-end check against a real server. Run from the repo root with:
 //   ./scripts/e2e.sh
 // It is skipped when TAMWEEN_SERVER / TAMWEEN_CODE are not set.
@@ -90,6 +91,31 @@ void main() {
       final rice2 = (await db.productByBarcode('6281000123456'))!;
       expect(rice2.stock, (48 - 6 + 60) * 1000);
       expect((await db.openReceipts()).length, 1);
+
+      // A delivery with no voucher: the supplier invoice number, its total and a photo, all reach the server.
+      final nr = uuid4();
+      final sup = (await db.suppliers()).first;
+      await db.enqueue('new_receipts', nr, {
+        'id': nr,
+        'supplier_id': sup.$1,
+        'supplier_name': sup.$2,
+        'supplier_invoice_no': 'E2E-$nr'.substring(0, 20),
+        'supplier_invoice_total': '12.300',
+        'employee_id': ahmad.id,
+        'lines': [
+          {'product_id': rice.id, 'mode': 'piece', 'qty': '2.000'},
+        ],
+      });
+      // Queued before the voucher on purpose: the photo waits until the voucher is on the server.
+      await db.enqueue('receipt_files', 'ph-$nr', {
+        'receipt_client_id': nr,
+        'file_id': 'ph-$nr',
+        'content_type': 'image/jpeg',
+        'data': base64Encode([0xff, 0xd8, 0xff, 0xe0, ...List.filled(500, 1)]),
+      });
+      await app.sync();
+      expect(app.rejected, 0);
+      expect(app.pending, 0, reason: 'voucher first, then its photo, in one sync');
 
       // The same receipt again is now rejected: it was already received.
       await db.enqueue('receipts', '${r.id}', {'receipt_id': r.id, 'lines': []});

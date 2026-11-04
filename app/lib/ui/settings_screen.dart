@@ -16,8 +16,11 @@ const _reasons = {
   'invalid': ('بيانات مش مفهومة', 'بلّغ المسؤول عن السيستم.'),
   'empty_receipt': ('سند فاضي', 'مفيش حاجة مطلوبة.'),
   'no_supplier': ('السند من غير مورد', 'سجّله تاني واختار المورد.'),
+  'duplicate_invoice': ('فاتورة الشركة دي اتسجلت قبل كده', 'راجع رقم الفاتورة مع المدير. لو السند اتسجل مرتين، مفيش حاجة مطلوبة.'),
+  'receipt_rejected': ('صورة لسند اترفض', 'مفيش حاجة مطلوبة.'),
+  'bad_file': ('صورة الفاتورة مش مقبولة', 'صوّرها تاني وابعتها للمدير.'),
 };
-const _kinds = {'sales': 'بيع', 'counts': 'جرد', 'receipts': 'استلام', 'new_receipts': 'استلام من غير سند'};
+const _kinds = {'sales': 'بيع', 'counts': 'جرد', 'receipts': 'استلام', 'new_receipts': 'استلام من غير سند', 'receipt_files': 'صورة فاتورة'};
 
 class SettingsScreen extends StatefulWidget {
   const SettingsScreen({super.key});

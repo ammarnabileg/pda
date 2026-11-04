@@ -30,6 +30,13 @@ if not SECRET_KEY:
 PORT = int(os.environ.get("PORT", "9001"))
 HOST = os.environ.get("HOST", "0.0.0.0")
 PAIRING_MINUTES = 30
+# Invoice photos and scans. Kept next to the database, and copied by scripts/backup.py.
+FILES_DIR = os.environ.get("FILES_DIR") or (
+    os.path.join(os.environ.get("ProgramData", "C:\\ProgramData"), "Tamween", "Files") if os.name == "nt"
+    else str(BASE_DIR / "files"))
+MAX_UPLOAD_MB = 10
+# Shown at the top of printed statements. Set COOP_NAME in server/.env.
+COOP_NAME = os.environ.get("COOP_NAME") or "الجمعية التعاونية"
 # Where setup.ps1 puts the daily backups (and backup.log).
 BACKUP_DIR = os.environ.get("BACKUP_DIR") or (
     os.path.join(os.environ.get("ProgramData", "C:\\ProgramData"), "Tamween", "Backups") if os.name == "nt"

@@ -20,7 +20,7 @@ from . import config, services
 from .db import get_db
 from .models import (
     ADMIN_ROLE, MODES, PERMISSIONS, UNITS, AuditLog, CountLine, CountSession, Device, Employee, Product, ProductBarcode, Receipt, ReceiptLine,
-    Role, Sale, SaleLine, StockMove, Supplier, now,
+    ReceiptFile, Role, Sale, SaleLine, StockMove, Supplier, SupplierPayment, PAYMENT_METHODS, now,
 )
 from .security import hash_password, hash_pin, new_pairing_code, verify_password, verify_pin
 
@@ -58,7 +58,7 @@ def base_text(p: Product, base):
 
 
 templates.env.filters.update(money=fmt_money, qty=fmt_qty, dt=fmt_dt)
-templates.env.globals.update(PERMISSIONS=PERMISSIONS, UNITS=UNITS, MODES=MODES, base_text=base_text)
+templates.env.globals.update(COOP_NAME=config.COOP_NAME, PERMISSIONS=PERMISSIONS, UNITS=UNITS, MODES=MODES, base_text=base_text)
 
 
 def render(request: Request, name: str, ctx: dict | None = None, status: int = 200):
@@ -480,7 +480,80 @@ async def import_products(request: Request, user=Depends(need["products"]), db: 
 
 @router.get("/suppliers", response_class=HTMLResponse)
 def suppliers(request: Request, user=Depends(need["products"]), db: Session = Depends(get_db)):
-    return render(request, "suppliers.html", {"items": db.scalars(select(Supplier).order_by(Supplier.active.desc(), Supplier.name)).all()})
+    items = db.scalars(select(Supplier).order_by(Supplier.active.desc(), Supplier.name)).all()
+    today = datetime.now(TZ).date()
+    balances = {s.id: services.supplier_statement(db, s, date(2000, 1, 1), today)["closing"] for s in items}
+    return render(request, "suppliers.html", {"items": items, "balances": balances})
+
+
+@router.get("/suppliers/{sid}/statement", response_class=HTMLResponse)
+def supplier_statement(sid: int, request: Request, d_from: str = "", d_to: str = "", view: str = "summary",
+                       user=Depends(need["receipts"]), db: Session = Depends(get_db)):
+    sup = db.get(Supplier, sid)
+    if not sup:
+        return redirect("/suppliers")
+    today = datetime.now(TZ).date()
+    f_from, f_to = parse_date(d_from, date(today.year, 1, 1)), parse_date(d_to, today)
+    st = services.supplier_statement(db, sup, f_from, f_to)
+    if request.query_params.get("format") == "csv":
+        buf = io.StringIO()
+        w = csv.writer(buf)
+        w.writerow([f"كشف حساب {sup.name}", f"{f_from} إلى {f_to}"])
+        w.writerow(["التاريخ", "البيان", "رقم فاتورة الشركة", "مستلم (عليه)", "مدفوع (له)", "الرصيد"])
+        bal = st["opening"]
+        w.writerow(["", "رصيد أول المدة", "", "", "", fmt_money(bal)])
+        for item in statement_lines(st):
+            bal += item["debit"] - item["credit"]
+            w.writerow([item["date"], item["text"], item["invoice"], fmt_money(item["debit"]) if item["debit"] else "",
+                        fmt_money(item["credit"]) if item["credit"] else "", fmt_money(bal)])
+        return Response("\ufeff" + buf.getvalue(), media_type="text/csv; charset=utf-8",
+                        headers={"Content-Disposition": f'attachment; filename="statement-{sid}-{f_from}-{f_to}.csv"'})
+    lines, bal = [], st["opening"]
+    for item in statement_lines(st):
+        bal += item["debit"] - item["credit"]
+        lines.append({**item, "balance": bal})
+    return render(request, "statement.html", {"s": sup, "st": st, "lines": lines, "d_from": f_from, "d_to": f_to,
+                                              "view": "detail" if view == "detail" else "summary",
+                                              "today": today, "methods": PAYMENT_METHODS})
+
+
+def statement_lines(st):
+    """Vouchers and payments in date order, as debit (received, owed to the supplier) and credit (paid)."""
+    items = [{"sort": (row["at"].astimezone(TZ).date(), 0, row["r"].id), "date": row["at"].astimezone(TZ).date(),
+              "text": f"سند استلام {row['r'].id}", "invoice": row["r"].supplier_invoice_no or "", "debit": row["amount"],
+              "credit": Decimal(0), "row": row} for row in st["rows"]]
+    items += [{"sort": (p.paid_on, 1, p.id), "date": p.paid_on,
+               "text": f"دفعة {PAYMENT_METHODS.get(p.method, p.method)}" + (f" {p.reference}" if p.reference else ""),
+               "invoice": "", "debit": Decimal(0), "credit": p.amount, "pay": p} for p in st["payments"]]
+    return sorted(items, key=lambda x: x["sort"])
+
+
+@router.post("/suppliers/{sid}/payments")
+async def supplier_payment(sid: int, request: Request, user=Depends(admin_only), db: Session = Depends(get_db)):
+    sup = db.get(Supplier, sid)
+    if not sup:
+        return redirect("/suppliers")
+    f = await request.form()
+    amount = dec(f.get("amount"))
+    paid_on = parse_date(f.get("paid_on"), None)
+    method = str(f.get("method", "cash"))
+    note = str(f.get("note", "")).strip()[:500] or None
+    back = f"/suppliers/{sid}/statement?" + urlencode({k: f.get(k, "") for k in ("d_from", "d_to", "view")})
+    if amount is None or amount == 0 or paid_on is None or method not in PAYMENT_METHODS:
+        flash(request, "اكتب المبلغ والتاريخ وطريقة الدفع", "error")
+        return redirect(back)
+    if amount < 0 and not note:
+        flash(request, "المبلغ بالسالب معناه تصحيح دفعة غلط: اكتب السبب في الملاحظة", "error")
+        return redirect(back)
+    db.add(SupplierPayment(supplier_id=sid, amount=d3_money(amount), paid_on=paid_on, method=method,
+                           reference=str(f.get("reference", "")).strip()[:80] or None, note=note, created_by=user.id))
+    db.commit()
+    flash(request, f"تم تسجيل دفعة {fmt_money(amount)} د.ك لـ {sup.name}")
+    return redirect(back)
+
+
+def d3_money(v):
+    return Decimal(v).quantize(Decimal("0.001"))
 
 
 @router.post("/suppliers")
@@ -554,20 +627,51 @@ async def save_receipt(request, db, r: Receipt | None):
     sup = db.get(Supplier, int(f.get("supplier_id") or 0))
     if not sup:
         errors.insert(0, "اختار المورد")
+    inv_no, inv_total, inv_errors = invoice_fields(db, f, sup, r)
+    errors[:0] = inv_errors
+    uploads = [u for u in f.getlist("files") if getattr(u, "filename", "")]
     if errors:
         return None, render(request, "receipt_form.html", receipt_form_ctx(db, r, f, errors), 400)
+    is_new = r is None
     if r is None:
         r = Receipt()
         db.add(r)
     r.supplier_id = sup.id
     r.note = str(f.get("note", "")).strip() or None
+    r.supplier_invoice_no, r.supplier_invoice_total = inv_no, inv_total
     r.lines.clear()
     db.flush()
     for p, mode, q in lines:
         r.lines.append(ReceiptLine(product_id=p.id, mode=mode, ordered=q))
+    try:
+        for u in uploads:
+            services.save_receipt_file(db, r, await u.read(), u.content_type or "", employee_id=request.state.user.id)
+    except services.EditError as e:
+        db.rollback()
+        return None, render(request, "receipt_form.html", receipt_form_ctx(db, None if is_new else r, f, [str(e)]), 400)
     services.bump(db, r)
     db.commit()
     return r, None
+
+
+def invoice_fields(db, f, sup, r):
+    """Supplier invoice number (required, once per supplier) and its total (optional)."""
+    errors = []
+    no = str(f.get("supplier_invoice_no", "")).strip()[:60]
+    if not no:
+        errors.append("اكتب رقم فاتورة الشركة الأول")
+    elif sup is not None:
+        other = services.invoice_taken(db, sup.id, no, r.id if r else None)
+        if other:
+            errors.append(f"فاتورة الشركة رقم {no} متسجلة قبل كده في سند {other.id}")
+    raw = str(f.get("supplier_invoice_total", "")).strip()
+    total = None
+    if raw:
+        total = dec(raw)
+        if total is None or total < 0:
+            errors.append("إجمالي الفاتورة لازم يكون رقم")
+            total = None
+    return no or None, total, errors
 
 
 @router.get("/receipts/new", response_class=HTMLResponse)
@@ -589,7 +693,60 @@ def receipt_detail(rid: int, request: Request, user=Depends(need["receipts"]), d
     r = db.get(Receipt, rid)
     if not r:
         return redirect("/receipts")
-    return render(request, "receipt.html", {"r": r, **history(db, "receipts", r.id, "receipt_lines", [l.id for l in r.lines])})
+    value, estimated = services.receipt_value(r) if r.status == "received" else (None, False)
+    return render(request, "receipt.html", {"r": r, "value": value, "value_estimated": estimated,
+                                            **history(db, "receipts", r.id, "receipt_lines", [l.id for l in r.lines])})
+
+
+@router.get("/receipts/{rid}/files/{fid}")
+def receipt_file(rid: int, fid: int, user=Depends(need["receipts"]), db: Session = Depends(get_db)):
+    f = db.get(ReceiptFile, fid)
+    if not f or f.receipt_id != rid:
+        return redirect(f"/receipts/{rid}")
+    path = Path(config.FILES_DIR) / f.filename
+    if not path.is_file():
+        return HTMLResponse("<p dir=rtl>الملف مش موجود على الكمبيوتر. رجّعه من النسخة الاحتياطية.</p>", status_code=404)
+    return Response(path.read_bytes(), media_type=f.content_type,
+                    headers={"Content-Disposition": f'inline; filename="invoice-{rid}-{fid}{path.suffix}"'})
+
+
+@router.post("/receipts/{rid}/files")
+async def receipt_file_upload(rid: int, request: Request, user=Depends(admin_only), db: Session = Depends(get_db)):
+    r = db.get(Receipt, rid)
+    if not r:
+        return redirect("/receipts")
+    form = await request.form()
+    ups = [u for u in form.getlist("files") if getattr(u, "filename", "")]
+    try:
+        for u in ups:
+            services.save_receipt_file(db, r, await u.read(), u.content_type or "", employee_id=user.id)
+    except services.EditError as e:
+        db.rollback()
+        flash(request, str(e), "error")
+        return redirect(f"/receipts/{rid}")
+    db.commit()
+    flash(request, f"تم رفع {len(ups)} ملف" if ups else "اختار ملف الأول", "ok" if ups else "error")
+    return redirect(f"/receipts/{rid}")
+
+
+@router.post("/receipts/{rid}/invoice")
+async def receipt_invoice(rid: int, request: Request, user=Depends(admin_only), db: Session = Depends(get_db)):
+    """Set or fix the supplier invoice number and total of any voucher (logged)."""
+    r = db.get(Receipt, rid)
+    if not r:
+        return redirect("/receipts")
+    f = await request.form()
+    no, total, errors = invoice_fields(db, f, r.supplier, r)
+    if errors:
+        flash(request, "، ".join(errors), "error")
+        return redirect(f"/receipts/{rid}")
+    reason = str(f.get("reason", "")).strip()
+    services.set_actor(db, f"emp:{user.id}", reason or None)
+    r.supplier_invoice_no, r.supplier_invoice_total = no, total
+    services.bump(db, r)
+    db.commit()
+    flash(request, "تم حفظ بيانات فاتورة الشركة")
+    return redirect(f"/receipts/{rid}")
 
 
 @router.get("/receipts/{rid}/edit", response_class=HTMLResponse)
@@ -1371,7 +1528,7 @@ def backup_page(request: Request, user=Depends(need["backup"])):
             entries.append({"when": when, "ok": status == "OK", "detail": detail.strip()})
     last_ok = next((e for e in reversed(entries) if e["ok"]), None)
     last = entries[-1] if entries else None
-    return render(request, "backup.html", {"available": bool(pg_dump_cmd()), "dir": config.BACKUP_DIR,
+    return render(request, "backup.html", {"files_dir": config.FILES_DIR, "available": bool(pg_dump_cmd()), "dir": config.BACKUP_DIR,
                                            "last_ok": last_ok, "last": last, "recent": list(reversed(entries[-10:]))})
 
 

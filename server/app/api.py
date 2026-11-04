@@ -1,14 +1,14 @@
 """JSON API used by the PDA devices."""
 from datetime import timedelta
 
-from fastapi import APIRouter, Depends, Header, HTTPException
+from fastapi import APIRouter, Depends, File, Form, Header, HTTPException, UploadFile
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from . import services
 from .db import get_db
-from .models import Device, now
+from .models import Device, Receipt, now
 from .security import hash_token, new_token
 
 router = APIRouter(prefix="/api/v1")
@@ -61,3 +61,22 @@ def sync_pull(since: int = 0, device: Device = Depends(current_device), db: Sess
 @router.post("/sync/push")
 def sync_push(payload: dict, device: Device = Depends(current_device), db: Session = Depends(get_db)):
     return services.push(db, device, payload)
+
+
+@router.post("/receipt-file")
+async def receipt_file(receipt_client_id: str = Form(...), file_id: str = Form(...), file: UploadFile = File(...),
+                       device: Device = Depends(current_device), db: Session = Depends(get_db)):
+    """Photo of the supplier invoice for a voucher made on this device. Sent after the voucher itself;
+    404 means the voucher has not arrived yet, so the device keeps the photo and tries again."""
+    r = db.scalar(select(Receipt).where(Receipt.client_id == receipt_client_id, Receipt.device_id == device.id))
+    if r is None:
+        raise HTTPException(404, "unknown_receipt")
+    data = await file.read()
+    try:
+        f = services.save_receipt_file(db, r, data, file.content_type or "", employee_id=r.received_by,
+                                       device_id=device.id, client_id=f"{device.id}:{file_id}"[:60])
+    except services.EditError as e:
+        raise HTTPException(422, str(e))
+    db.commit()
+    return {"ok": True, "id": f.id}
+

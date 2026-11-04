@@ -94,3 +94,10 @@ legend{font-weight:800;padding:0 6px}
 /* View-only (not admin): no buttons in edit forms, even ones a page script adds later. The server refuses changes anyway. */
 .readonly form[method=post]:not([action="/logout"]) button{display:none!important}
 .readonly form[method=post]:not([action="/logout"]) :is(input,select,textarea),.readonly [form]{pointer-events:none;background:#f3f4f6;color:inherit;opacity:1}
+.invoice-files{display:flex;flex-wrap:wrap;gap:10px;margin:10px 0}
+.invoice-files img{height:140px;border:1px solid #d8dde3;border-radius:8px;object-fit:cover}
+.statement-head{display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap}
+.signs{display:grid;grid-template-columns:1fr 1fr;gap:40px;margin-top:40px}
+.signs div{border-top:1px solid #333;padding-top:6px;text-align:center}
+@media print{.invoice-files img{height:220px}}
+@media print{.page-tools,.no-print{display:none!important}}

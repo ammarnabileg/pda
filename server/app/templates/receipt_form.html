@@ -6,7 +6,16 @@
 {% include "_errors.html" %}
 {% if not suppliers %}<div class="alert error">لازم تضيف مورد الأول من <a href="/suppliers">صفحة الموردين</a>.</div>{% endif %}
 {% set sel_sup = (form.get('supplier_id')|int if form else (r.supplier_id if r else 0)) %}
-<form method="post" class="card">
+<form method="post" class="card" enctype="multipart/form-data">
+  <h2 style="margin-top:0">١. فاتورة الشركة</h2>
+  <div class="grid">
+    <div class="field"><label for="inv_no">رقم فاتورة الشركة (إجباري)</label><input id="inv_no" name="supplier_invoice_no" required maxlength="60" dir="ltr" autofocus
+      value="{{ form.get('supplier_invoice_no', '') if form else (r.supplier_invoice_no or '' if r else '') }}"><div class="hint">نفس الرقم مايتسجلش مرتين لنفس الشركة</div></div>
+    <div class="field"><label for="inv_total">إجمالي الفاتورة (د.ك)</label><input id="inv_total" name="supplier_invoice_total" inputmode="decimal" dir="ltr"
+      value="{{ form.get('supplier_invoice_total', '') if form else ((r.supplier_invoice_total|money) if r and r.supplier_invoice_total is not none else '') }}"><div class="hint">اللي مكتوب في فاتورة الشركة. ده اللي بيتحسب في براءة الذمة</div></div>
+    <div class="field"><label for="files">صورة أو PDF من الفاتورة</label><input id="files" name="files" type="file" accept="image/*,application/pdf" multiple></div>
+  </div>
+  <h2>٢. المورد والأصناف</h2>
   <div class="grid">
     <div class="field"><label>المورد</label><select name="supplier_id" required><option value="">اختار…</option>{% for s in suppliers %}<option value="{{ s.id }}" {{ 'selected' if s.id == sel_sup }}>{{ s.name }}</option>{% endfor %}</select></div>
     <div class="field"><label>ملاحظة (تظهر للموظف)</label><input name="note" value="{{ form.get('note', '') if form else (r.note or '' if r else '') }}"></div>
@@ -28,7 +37,9 @@ const t=document.getElementById('tpl'),tb=document.getElementById('lines').tBodi
 function addRow(){const n=t.content.cloneNode(true);tb.appendChild(n);const i=tb.querySelectorAll('input[name=product]');i[i.length-1].focus()}
 if(tb.querySelectorAll('input[name=product]').length===0){addRow();addRow();addRow()}
 // Scanners send Enter after the barcode: move to the quantity box instead of submitting the form.
-document.addEventListener('keydown',e=>{if(e.key==='Enter'&&e.target.name==='product'){e.preventDefault();e.target.closest('tr').querySelector('input[name=qty]').focus()}
+document.addEventListener('keydown',e=>{if(e.key==='Enter'&&e.target.name==='supplier_invoice_no'){e.preventDefault();document.getElementById('inv_total').focus()}
+  if(e.key==='Enter'&&e.target.name==='supplier_invoice_total'){e.preventDefault();document.querySelector('select[name=supplier_id]').focus()}
+  if(e.key==='Enter'&&e.target.name==='product'){e.preventDefault();e.target.closest('tr').querySelector('input[name=qty]').focus()}
   if(e.key==='Enter'&&e.target.name==='qty'){e.preventDefault();addRow()}})
 </script>
 {% endblock %}

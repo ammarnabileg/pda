@@ -62,7 +62,7 @@ def test_csv_import_all_or_nothing(admin_client, seed, db):
 
 
 def test_receipt_create_and_edit(admin_client, seed, db):
-    data = {"supplier_id": str(seed["supplier"].id), "note": "",
+    data = {"supplier_id": str(seed["supplier"].id), "note": "", "supplier_invoice_no": "INV-100",
             "product": ["6281000123456 — أرز", "2100000012345 — سكر", ""], "mode": ["carton", "kg", "piece"], "qty": ["5", "20.5", ""]}
     r = admin_client.post("/receipts/new", data=data, follow_redirects=False)
     assert r.status_code == 303
@@ -154,7 +154,7 @@ def test_receipt_accepts_carton_barcode(admin_client, seed, db):
     from app.models import ProductBarcode
     db.add(ProductBarcode(product_id=seed["rice"].id, code="16281000123453", mode="carton"))
     db.commit()
-    r = admin_client.post("/receipts/new", data={"supplier_id": str(seed["supplier"].id), "note": "",
+    r = admin_client.post("/receipts/new", data={"supplier_id": str(seed["supplier"].id), "note": "", "supplier_invoice_no": "C-7",
                                                  "product": ["16281000123453 — أرز"], "mode": ["carton"], "qty": ["3"]}, follow_redirects=False)
     assert r.status_code == 303
 
