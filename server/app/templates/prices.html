@@ -1,7 +1,7 @@
 {% extends "base.html" %}{% block title %}سجل الأسعار{% endblock %}
 {% block content %}
 {% from "_prices.html" import price_cell %}
-<div class="bar"><h1>سجل الأسعار</h1><a class="btn light" href="?d_from={{ d_from }}&d_to={{ d_to }}&q={{ q|urlencode }}&format=csv">تنزيل Excel (CSV)</a></div>
+<div class="bar"><h1>سجل الأسعار</h1></div>
 <p class="muted">كل تغيير في سعر البيع أو سعر الشراء: من لوحة التحكم أو الاستيراد من Excel، ومين عمله وإمتى. أول سطر لكل صنف جديد هو سعره وقت ما اتضاف.</p>
 <form class="card bar" method="get">
   <div style="flex:2;min-width:200px"><label for="q">صنف (اسم أو باركود)</label><input id="q" name="q" value="{{ q }}" autocomplete="off"></div>

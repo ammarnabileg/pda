@@ -7,7 +7,7 @@ import subprocess
 from datetime import date, datetime, time, timedelta
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
-from urllib.parse import urlencode
+from urllib.parse import quote, urlencode
 from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends, Request
@@ -16,7 +16,8 @@ from fastapi.templating import Jinja2Templates
 from sqlalchemy import Date, String, case, cast, func, or_, select
 from sqlalchemy.orm import Session
 
-from . import config, services
+from . import config, exports, services
+from .exports import Col, Report, Table
 from .db import get_db
 from .models import (
     ADMIN_ROLE, MODES, PERMISSIONS, UNITS, AuditLog, CountLine, CountSession, Device, Employee, Product, ProductBarcode, Receipt, ReceiptLine,
@@ -63,10 +64,32 @@ templates.env.globals.update(COOP_NAME=config.COOP_NAME, PERMISSIONS=PERMISSIONS
 
 def render(request: Request, name: str, ctx: dict | None = None, status: int = 200):
     ctx = dict(ctx or {})
+    if ctx.pop("exportable", False):
+        ctx["export_links"] = {f: str(request.url.include_query_params(format=f)) for f in ("xlsx", "pdf")}
     ctx["user"] = getattr(request.state, "user", None)
     ctx["flash"] = request.session.pop("flash", None)
     ctx["path"] = request.url.path
     return templates.TemplateResponse(request, name, ctx, status_code=status)
+
+
+def export_format(request: Request):
+    f = request.query_params.get("format")
+    return f if f in ("xlsx", "pdf") else None
+
+
+def send_report(request: Request, rep: Report):
+    """The page as an Excel or PDF file, same data and filters as on screen."""
+    fmt = export_format(request)
+    try:
+        data = exports.to_xlsx(rep) if fmt == "xlsx" else exports.to_pdf(rep)
+    except ImportError:
+        return HTMLResponse("<p dir=rtl style='font:20px sans-serif;padding:30px'>برامج Excel و PDF مش متثبتة على الكمبيوتر ده. "
+                            "شغّل setup.bat مرة (محتاج إنترنت) وجرّب تاني.</p>", status_code=503)
+    media = ("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" if fmt == "xlsx" else "application/pdf")
+    name = f"{rep.filename}.{fmt}"
+    ascii_name = "".join(c if c.isascii() and (c.isalnum() or c in "-_.") else "_" for c in name)
+    return Response(data, media_type=media, headers={
+        "Content-Disposition": f"attachment; filename=\"{ascii_name}\"; filename*=UTF-8''{quote(name)}"})
 
 
 def flash(request: Request, msg: str, kind: str = "ok"):
@@ -267,6 +290,19 @@ def products(request: Request, q: str = "", status: str = "active", low: int = 0
         stmt = stmt.where(Product.stock <= Product.min_stock, Product.min_stock > 0)
     if unit in UNITS:
         stmt = stmt.where(Product.unit == unit)
+    if export_format(request):
+        rows = db.scalars(stmt.order_by(Product.name)).all()
+        filt = "، ".join(x for x in [f"بحث: {q.strip()}" if q.strip() else "", "تحت حد الطلب" if low else "",
+                                     {"active": "الفعّال", "inactive": "الموقوف"}.get(status, "الكل")] if x)
+        return send_report(request, Report(
+            title="الأصناف", filename=f"products-{datetime.now(TZ):%Y%m%d}", subtitle=f"{len(rows)} صنف · {filt}",
+            tables=[Table([Col("م", "int", .4), Col("الصنف", "text", 3), Col("الباركود", "text", 1.6),
+                           Col("باركودات تانية", "text", 1.6), Col("الوحدة", "text", .8), Col("حبات الكرتون", "int", .7),
+                           Col("سعر البيع", "money"), Col("سعر الشراء", "money"), Col("الرصيد", "qty"),
+                           Col("حد الطلب", "qty", .8), Col("الحالة", "text", .7)],
+                          [[i, p.name, p.barcode, " ".join(b.code for b in p.extra_barcodes), UNITS.get(p.unit, p.unit),
+                            p.carton or "", p.price, p.cost, p.stock, p.min_stock, "فعّال" if p.active else "موقوف"]
+                           for i, p in enumerate(rows, 1)])]))
     total = db.scalar(select(func.count()).select_from(stmt.subquery()))
     pages = max(1, -(-total // PAGE_SIZE))
     page = min(max(1, page), pages)
@@ -275,7 +311,7 @@ def products(request: Request, q: str = "", status: str = "active", low: int = 0
     return render(request, "products.html", {
         "items": items, "total": total, "page": page, "pages": pages, **params, "offset": (page - 1) * PAGE_SIZE,
         "page_url": lambda n: "/products?" + urlencode({**{k: v for k, v in params.items() if v}, "page": n}),
-        "filtered": bool(q.strip() or low or unit or status != "active"),
+        "filtered": bool(q.strip() or low or unit or status != "active"), "exportable": True,
     })
 
 
@@ -390,7 +426,24 @@ def product_detail(pid: int, request: Request, user=Depends(need["products"]), d
     moves = db.scalars(select(StockMove).where(StockMove.product_id == pid).order_by(StockMove.created_at.desc()).limit(50)).all()
     sale_refs = {m.ref for m in moves if m.ref and len(m.ref) == 36}
     sale_nos = dict(db.execute(select(cast(Sale.id, String), Sale.no).where(cast(Sale.id, String).in_(sale_refs))).all()) if sale_refs else {}
-    return render(request, "product_form.html", form_ctx(p, None, moves=moves, sale_nos=sale_nos,
+    if export_format(request):
+        prices = _price_rows(db, services.price_history(db, p.id, limit=200))
+        reasons = {"sale": "بيع", "receipt": "استلام", "count": "جرد", "manual": "يدوي", "edit": "تعديل محاسبة"}
+        return send_report(request, Report(
+            title=f"كارت صنف: {p.name}", filename=f"product-{p.id}",
+            info=[("الباركود", p.barcode), ("الوحدة", UNITS.get(p.unit, p.unit)), ("سعر البيع", fmt_money(p.price)),
+                  ("سعر الشراء", fmt_money(p.cost)), ("الرصيد", base_text(p, p.stock)), ("حد الطلب", fmt_qty(p.min_stock, p.unit)),
+                  ("حبات الكرتون", p.carton or "—"), ("باركودات تانية", " ".join(b.code for b in p.extra_barcodes) or "—")],
+            tables=[Table([Col("م", "int", .4), Col("الوقت", "text", 1.3), Col("سعر البيع قبل", "money"), Col("سعر البيع بعد", "money"),
+                           Col("سعر الشراء قبل", "money"), Col("سعر الشراء بعد", "money"), Col("مين", "text", 1.2)],
+                          [[i, fmt_dt(r["e"].at), r["price"][0], r["price"][1], r["cost"][0], r["cost"][1], r["who"]]
+                           for i, r in enumerate(prices, 1)], title="سجل الأسعار"),
+                    Table([Col("م", "int", .4), Col("الوقت", "text", 1.3), Col("النوع", "text", .9), Col("الكمية", "qty"),
+                           Col("مرجع / ملاحظة", "text", 2.5)],
+                          [[i, fmt_dt(m.created_at), reasons.get(m.reason, m.reason), m.delta,
+                            (f"فاتورة {sale_nos[m.ref]}" if m.ref in sale_nos else (m.note or m.ref or ""))]
+                           for i, m in enumerate(moves, 1)], title="آخر 50 حركة مخزون")]))
+    return render(request, "product_form.html", form_ctx(p, None, moves=moves, sale_nos=sale_nos, exportable=True,
                   prices=_price_rows(db, services.price_history(db, p.id, limit=50)),
                   **history(db, "products", p.id, "product_barcodes", [b.id for b in p.extra_barcodes])))
 
@@ -414,46 +467,178 @@ async def product_update(pid: int, request: Request, user=Depends(need["products
 
 # No stock column: stock only changes through sales, vouchers, approved counts and corrections with a reason.
 IMPORT_COLUMNS = ["barcode", "name", "unit", "price", "cost", "carton", "min_stock", "carton_barcode", "extra_barcodes"]
+# Column titles in the Excel template; files may use these or the English keys.
+IMPORT_TITLES = {"barcode": "الباركود", "name": "اسم الصنف", "unit": "الوحدة", "price": "سعر البيع", "cost": "سعر الشراء",
+                 "carton": "حبات الكرتون", "min_stock": "حد الطلب", "carton_barcode": "باركود الكرتون",
+                 "extra_barcodes": "باركودات تانية"}
+IMPORT_ALIASES = {**{k: k for k in IMPORT_COLUMNS}, **{v: k for k, v in IMPORT_TITLES.items()},
+                  "الصنف": "name", "الاسم": "name", "نوع البيع": "unit", "عدد الحبات في الكرتون": "carton",
+                  "الباركود الأساسي": "barcode", "باركودات إضافية": "extra_barcodes"}
+UNIT_ALIASES = {"piece": "piece", "حبة": "piece", "بالحبة": "piece", "حبه": "piece", "kg": "kg", "كيلو": "kg",
+                "بالكيلو": "kg", "كجم": "kg", "كيلوجرام": "kg"}
+TEXT_COLUMNS = ("barcode", "carton_barcode", "extra_barcodes")
 
 
-@router.get("/products-import", response_class=HTMLResponse)
-def import_form(request: Request, user=Depends(need["products"])):
-    return render(request, "product_import.html", {"columns": IMPORT_COLUMNS})
+def _cell(v, key):
+    """Excel values as the text the form expects. Barcodes typed as numbers come back as 6281000123456, not 6.28e12."""
+    if v is None:
+        return ""
+    if isinstance(v, float) and v.is_integer() and (key in TEXT_COLUMNS or key == "carton"):
+        return str(int(v))
+    if isinstance(v, float):
+        return format(Decimal(str(v)).normalize(), "f")
+    return str(v).strip()
 
 
-@router.get("/products-import/template.csv")
-def import_template(user=Depends(need["products"])):
-    body = (",".join(IMPORT_COLUMNS) + "\n"
-            "6281000123456,أرز بسمتي ٥ كجم,piece,2.450,2.050,6,10,16281000123453,6281000123999\n"
-            "2100000012345,سكر أبيض,kg,0.350,0.280,0,20,,\n")
-    return Response("﻿" + body, media_type="text/csv; charset=utf-8",
-                    headers={"Content-Disposition": "attachment; filename=products-template.csv"})
+def read_import_file(name: str, raw: bytes):
+    """Rows as {english key: text}, from .xlsx (first sheet, first row = titles) or CSV. None if unreadable."""
+    if raw[:2] == b"PK" or name.lower().endswith(".xlsx"):
+        from openpyxl import load_workbook
 
-
-@router.post("/products-import", response_class=HTMLResponse)
-async def import_products(request: Request, user=Depends(need["products"]), db: Session = Depends(get_db)):
-    f = await request.form()
-    upload = f.get("file")
-    if not upload or not hasattr(upload, "read"):
-        return render(request, "product_import.html", {"columns": IMPORT_COLUMNS, "errors": ["اختار ملف CSV"]}, 400)
-    raw = await upload.read()
-    text = None
+        try:
+            ws = load_workbook(io.BytesIO(raw), read_only=True, data_only=True).worksheets[0]
+        except Exception:
+            return None
+        it = ws.iter_rows(values_only=True)
+        header = None
+        for row in it:
+            if any(c not in (None, "") for c in row):
+                header = [IMPORT_ALIASES.get(str(c or "").strip().lower(), IMPORT_ALIASES.get(str(c or "").strip(), "")) for c in row]
+                break
+        if not header:
+            return []
+        rows = []
+        for row in it:
+            if not any(c not in (None, "") for c in row):
+                continue
+            rows.append({k: _cell(v, k) for k, v in zip(header, row) if k})
+        return rows
     for enc in ("utf-8-sig", "cp1256"):
         try:
             text = raw.decode(enc)
             break
         except UnicodeDecodeError:
             continue
-    if text is None:
-        return render(request, "product_import.html", {"columns": IMPORT_COLUMNS, "errors": ["الملف مش مقروء. احفظه من Excel كـ CSV UTF-8"]}, 400)
-    rows = list(csv.DictReader(io.StringIO(text)))
+    else:
+        return None
+    out = []
+    for row in csv.DictReader(io.StringIO(text)):
+        out.append({IMPORT_ALIASES.get(k.strip().lower(), IMPORT_ALIASES.get(k.strip(), "")): (v or "").strip()
+                    for k, v in row.items() if k})
+    return [{k: v for k, v in r.items() if k} for r in out]
+
+
+def import_template_xlsx(products=None) -> bytes:
+    """The import file: Arabic titles, barcode columns as text, a unit drop-down, examples or the current products."""
+    from openpyxl import Workbook
+    from openpyxl.styles import Alignment, Font, PatternFill
+    from openpyxl.utils import get_column_letter
+    from openpyxl.worksheet.datavalidation import DataValidation
+
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "الأصناف"
+    ws.sheet_view.rightToLeft = True
+    for i, key in enumerate(IMPORT_COLUMNS, start=1):
+        c = ws.cell(row=1, column=i, value=IMPORT_TITLES[key])
+        c.font = Font(name="Arial", bold=True, color="FFFFFF")
+        c.fill = PatternFill("solid", fgColor=exports.BRAND)
+        c.alignment = Alignment(horizontal="center", vertical="center")
+        col = get_column_letter(i)
+        ws.column_dimensions[col].width = {"name": 36, "extra_barcodes": 30}.get(key, 17)
+        if key in TEXT_COLUMNS:
+            for r in range(2, 5002):
+                ws[f"{col}{r}"].number_format = "@"
+    unit_col = get_column_letter(IMPORT_COLUMNS.index("unit") + 1)
+    dv = DataValidation(type="list", formula1='"حبة,كيلو"', allow_blank=True, showErrorMessage=True,
+                        errorTitle="الوحدة", error="اختار حبة أو كيلو")
+    ws.add_data_validation(dv)
+    dv.add(f"{unit_col}2:{unit_col}5001")
+    rows = ([[p.barcode, p.name, "كيلو" if p.unit == "kg" else "حبة", float(p.price), float(p.cost), p.carton,
+              float(p.min_stock), " ".join(b.code for b in p.extra_barcodes if b.mode == "carton"),
+              " ".join(b.code for b in p.extra_barcodes if b.mode != "carton")] for p in products]
+            if products is not None else
+            [["6281000123456", "أرز بسمتي ٥ كجم", "حبة", 2.45, 2.05, 6, 10, "16281000123453", "6281000123999"],
+             ["2100000012345", "سكر أبيض", "كيلو", 0.35, 0.28, 0, 20, "", ""]])
+    for r, row in enumerate(rows, start=2):
+        for i, v in enumerate(row, start=1):
+            c = ws.cell(row=r, column=i, value=v)
+            if IMPORT_COLUMNS[i - 1] in ("price", "cost"):
+                c.number_format = "0.000"
+    ws.freeze_panes = "A2"
+    help_ = wb.create_sheet("تعليمات")
+    help_.sheet_view.rightToLeft = True
+    help_.column_dimensions["A"].width = 110
+    for i, line in enumerate([
+        "طريقة الاستيراد",
+        "1. املأ ورقة «الأصناف»: كل صنف في سطر، وأول سطر هو أسماء الأعمدة (ماتغيّرهوش).",
+        "2. الباركود: لازم يتكتب كنص (العمود متظبط كده). لو لزقت أرقام من مكان تاني، اتأكد إنها مااتحوّلتش لـ 6.28E+12.",
+        "3. الوحدة: «حبة» أو «كيلو» من القائمة.",
+        "4. حبات الكرتون: عدد الحبات في الكرتون، أو 0 لو مالوش كرتون.",
+        "5. باركود الكرتون وباركودات تانية: اختياري. لو أكتر من باركود، حط بينهم مسافة.",
+        "6. الرصيد مش في الملف: الرصيد مابيتعدلش من الاستيراد. الصنف الجديد بيبدأ بـ 0، والرصيد بييجي من سند استلام أو جرد.",
+        "7. لو الباركود موجود قبل كده، الصنف بيتحدّث (الاسم والأسعار) بدل ما يتكرر.",
+        "8. لو فيه أي سطر غلط، مفيش حاجة بتتحفظ، والصفحة بتقولك رقم السطر والغلط.",
+        "9. تغيير الأسعار لكل الأصناف: نزّل «الأصناف الحالية بنفس الشكل»، غيّر الأسعار، وارفع الملف. كل تغيير سعر بيتسجل في سجل الأسعار.",
+    ], start=1):
+        help_.cell(row=i, column=1, value=line).font = Font(name="Arial", bold=i == 1, size=14 if i == 1 else 12)
+    buf = io.BytesIO()
+    wb.save(buf)
+    return buf.getvalue()
+
+
+@router.get("/products-import", response_class=HTMLResponse)
+def import_form(request: Request, user=Depends(need["products"])):
+    return render(request, "product_import.html", {"columns": [IMPORT_TITLES[k] for k in IMPORT_COLUMNS]})
+
+
+@router.get("/products-import/template.xlsx")
+def import_template(request: Request, user=Depends(need["products"]), db: Session = Depends(get_db)):
+    current = request.query_params.get("current") == "1"
+    products = db.scalars(select(Product).where(Product.active.is_(True)).order_by(Product.name)).all() if current else None
+    name = f"products-{datetime.now(TZ):%Y%m%d}.xlsx" if current else "products-template.xlsx"
+    return Response(import_template_xlsx(products),
+                    media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    headers={"Content-Disposition": f"attachment; filename={name}"})
+
+
+@router.get("/products-import/template.csv")
+def import_template_csv(user=Depends(need["products"])):
+    body = (",".join(IMPORT_COLUMNS) + "\n"
+            "6281000123456,أرز بسمتي ٥ كجم,piece,2.450,2.050,6,10,16281000123453,6281000123999\n"
+            "2100000012345,سكر أبيض,kg,0.350,0.280,0,20,,\n")
+    return Response("\ufeff" + body, media_type="text/csv; charset=utf-8",
+                    headers={"Content-Disposition": "attachment; filename=products-template.csv"})
+
+
+@router.post("/products-import", response_class=HTMLResponse)
+async def import_products(request: Request, user=Depends(need["products"]), db: Session = Depends(get_db)):
+    cols = [IMPORT_TITLES[k] for k in IMPORT_COLUMNS]
+    f = await request.form()
+    upload = f.get("file")
+    if not upload or not hasattr(upload, "read"):
+        return render(request, "product_import.html", {"columns": cols, "errors": ["اختار ملف Excel أو CSV"]}, 400)
+    rows = read_import_file(getattr(upload, "filename", "") or "", await upload.read())
+    if rows is None:
+        return render(request, "product_import.html", {"columns": cols, "errors": ["الملف مش مقروء. استخدم ملف Excel (.xlsx) أو CSV UTF-8"]}, 400)
+    if not rows:
+        return render(request, "product_import.html", {"columns": cols, "errors": ["الملف فاضي أو أول سطر مش أسماء الأعمدة"]}, 400)
+    if "barcode" not in rows[0] or "name" not in rows[0]:
+        return render(request, "product_import.html", {"columns": cols, "errors": [
+            "مش لاقي عمود «الباركود» و«اسم الصنف». نزّل ملف النموذج وحط الأصناف فيه"]}, 400)
     errors, created, updated = [], 0, 0
     for n, row in enumerate(rows, start=2):
-        row = {k.strip().lower(): (v or "").strip() for k, v in row.items() if k}
-        row.setdefault("unit", "piece")
+        unit = row.get("unit", "").strip().lower() or "piece"
+        if unit not in UNIT_ALIASES:
+            errors.append(f"سطر {n}: الوحدة «{row.get('unit')}» مش مفهومة. اكتب حبة أو كيلو")
+            continue
+        row["unit"] = UNIT_ALIASES[unit]
+        for k in ("price", "cost", "carton", "min_stock"):
+            row.setdefault(k, "0" if k != "price" else "")
+            row[k] = row[k] or ("0" if k != "price" else "")
         row["active"] = "1"
         existing = db.scalar(select(Product).where(Product.barcode == row.get("barcode", "")))
-        extra = [(c, "carton") for c in [row.get("carton_barcode", "")] if c]
+        extra = [(c, "carton") for c in row.get("carton_barcode", "").replace("|", " ").split() if c]
         extra += [(c.strip(), "kg" if row["unit"] == "kg" else "piece") for c in row.get("extra_barcodes", "").replace("|", " ").split() if c.strip()]
         if existing:  # keep barcodes the file does not mention
             extra = [(b.code, b.mode) for b in existing.extra_barcodes if b.code not in dict(extra)] + extra
@@ -470,7 +655,8 @@ async def import_products(request: Request, user=Depends(need["products"]), db: 
         created, updated = created + (not existing), updated + bool(existing)
     if errors:
         db.rollback()
-        return render(request, "product_import.html", {"columns": IMPORT_COLUMNS, "errors": errors[:50] + (["…"] if len(errors) > 50 else []), "note": "لم يتم حفظ أي صنف. صلّح الأخطاء وارفع الملف تاني."}, 400)
+        return render(request, "product_import.html", {"columns": cols, "errors": errors[:50] + (["…"] if len(errors) > 50 else []),
+                                                       "note": "لم يتم حفظ أي صنف. صلّح الأخطاء وارفع الملف تاني."}, 400)
     db.commit()
     flash(request, f"تم الاستيراد: {created} صنف جديد، {updated} صنف اتعدل")
     return redirect("/products")
@@ -483,7 +669,14 @@ def suppliers(request: Request, user=Depends(need["products"]), db: Session = De
     items = db.scalars(select(Supplier).order_by(Supplier.active.desc(), Supplier.name)).all()
     today = datetime.now(TZ).date()
     balances = {s.id: services.supplier_statement(db, s, date(2000, 1, 1), today)["closing"] for s in items}
-    return render(request, "suppliers.html", {"items": items, "balances": balances})
+    if export_format(request):
+        return send_report(request, Report(
+            title="الموردين", filename=f"suppliers-{today}", subtitle=f"الأرصدة حتى {today}",
+            tables=[Table([Col("م", "int", .4), Col("المورد", "text", 2.5), Col("التليفون", "text", 1.2), Col("الحالة", "text", .7),
+                           Col("الرصيد المستحق", "money")],
+                          [[i, x.name, x.phone or "", "فعّال" if x.active else "موقوف", balances[x.id]] for i, x in enumerate(items, 1)],
+                          totals=["", "الإجمالي", "", "", sum(balances.values(), Decimal(0))])]))
+    return render(request, "suppliers.html", {"items": items, "balances": balances, "exportable": True})
 
 
 @router.get("/suppliers/{sid}/statement", response_class=HTMLResponse)
@@ -495,24 +688,46 @@ def supplier_statement(sid: int, request: Request, d_from: str = "", d_to: str =
     today = datetime.now(TZ).date()
     f_from, f_to = parse_date(d_from, date(today.year, 1, 1)), parse_date(d_to, today)
     st = services.supplier_statement(db, sup, f_from, f_to)
-    if request.query_params.get("format") == "csv":
-        buf = io.StringIO()
-        w = csv.writer(buf)
-        w.writerow([f"كشف حساب {sup.name}", f"{f_from} إلى {f_to}"])
-        w.writerow(["التاريخ", "البيان", "رقم فاتورة الشركة", "مستلم (عليه)", "مدفوع (له)", "الرصيد"])
-        bal = st["opening"]
-        w.writerow(["", "رصيد أول المدة", "", "", "", fmt_money(bal)])
-        for item in statement_lines(st):
-            bal += item["debit"] - item["credit"]
-            w.writerow([item["date"], item["text"], item["invoice"], fmt_money(item["debit"]) if item["debit"] else "",
-                        fmt_money(item["credit"]) if item["credit"] else "", fmt_money(bal)])
-        return Response("\ufeff" + buf.getvalue(), media_type="text/csv; charset=utf-8",
-                        headers={"Content-Disposition": f'attachment; filename="statement-{sid}-{f_from}-{f_to}.csv"'})
     lines, bal = [], st["opening"]
     for item in statement_lines(st):
         bal += item["debit"] - item["credit"]
         lines.append({**item, "balance": bal})
-    return render(request, "statement.html", {"s": sup, "st": st, "lines": lines, "d_from": f_from, "d_to": f_to,
+    if export_format(request):
+        clear = st["closing"] == 0
+        if clear:
+            verdict = f"تشهد {config.COOP_NAME} و«{sup.name}» بأنه لا توجد أي مستحقات مالية لأي طرف على الآخر حتى تاريخ {f_to}."
+        elif st["closing"] > 0:
+            verdict = f"المتبقي لـ«{sup.name}» على {config.COOP_NAME} حتى {f_to}: {fmt_money(st['closing'])} د.ك"
+        else:
+            verdict = f"مدفوع لـ«{sup.name}» زيادة عن البضاعة المستلمة حتى {f_to}: {fmt_money(-st['closing'])} د.ك"
+        tables = [Table([Col("م", "int", .4), Col("التاريخ", "text", .9), Col("البيان", "text", 1.8), Col("فاتورة الشركة", "text", 1.1),
+                         Col("بضاعة (عليه)", "money"), Col("مدفوع (له)", "money"), Col("الرصيد", "money")],
+                        [["", f_from, "رصيد أول المدة", "", "", "", st["opening"]]] +
+                        [[i, x["date"], x["text"], x["invoice"], x["debit"] or None, x["credit"] or None, x["balance"]]
+                         for i, x in enumerate(lines, 1)],
+                        title="الحركة", totals=["", "", "الإجمالي", "", st["billed"], st["paid"], st["closing"]])]
+        if view == "detail":
+            for row in st["rows"]:
+                r = row["r"]
+                lt = []
+                for i, l in enumerate(r.lines, 1):
+                    cost = l.unit_cost if l.unit_cost is not None else l.product.cost
+                    lt.append([i, l.product.name, "" if l.extra else l.ordered, l.received or 0, MODES.get(l.received_mode or l.mode, ""),
+                               cost, (l.received_base or 0) * cost])
+                tables.append(Table([Col("م", "int", .4), Col("الصنف", "text", 2.6), Col("المطلوب", "qty", .8), Col("المستلم", "qty", .8),
+                                     Col("الوحدة", "text", .7), Col("سعر الشراء", "money", .9), Col("القيمة", "money", .9)], lt,
+                                    title=f"سند {r.id} · فاتورة الشركة {r.supplier_invoice_no or '—'} · {fmt_dt(row['at'])}"
+                                          + (f" · إجمالي الفاتورة {fmt_money(r.supplier_invoice_total)}" if r.supplier_invoice_total is not None else ""),
+                                    totals=["", "قيمة المستلم", "", "", "", "", row["value"]]))
+        return send_report(request, Report(
+            title=("براءة ذمة" if clear else "كشف حساب") + (" تفصيلي" if view == "detail" else ""),
+            filename=f"statement-{sid}-{f_from}-{f_to}", subtitle=f"{sup.name} · من {f_from} إلى {f_to}",
+            info=[("المورد", sup.name), ("التليفون", sup.phone or "—"), ("رصيد أول المدة", fmt_money(st["opening"])),
+                  ("بضاعة مستلمة", f"{fmt_money(st['billed'])} ({len(st['rows'])} سند)"),
+                  ("مدفوعات", f"{fmt_money(st['paid'])} ({len(st['payments'])})"), ("الرصيد", f"{fmt_money(st['closing'])} د.ك")],
+            tables=tables, note=verdict + (f"  فيه {st['pending']} سند لسه ماتستلمش ومش داخل في الحساب." if st["pending"] else ""),
+            signatures=[f"توقيع وختم {config.COOP_NAME}", f"توقيع وختم مندوب «{sup.name}»"]))
+    return render(request, "statement.html", {"s": sup, "st": st, "lines": lines, "d_from": f_from, "d_to": f_to, "exportable": True,
                                               "view": "detail" if view == "detail" else "summary",
                                               "today": today, "methods": PAYMENT_METHODS})
 
@@ -585,7 +800,18 @@ def receipts(request: Request, status: str = "open", user=Depends(need["receipts
     if status in ("open", "pending", "received", "cancelled", "rejected"):
         stmt = stmt.where(Receipt.status == status)
     pending = db.scalar(select(func.count()).select_from(Receipt).where(Receipt.status == "pending"))
-    return render(request, "receipts.html", {"items": db.scalars(stmt).all(), "status": status, "pending": pending})
+    items = db.scalars(stmt).all()
+    if export_format(request):
+        return send_report(request, Report(
+            title="سندات الاستلام", filename=f"receipts-{datetime.now(TZ):%Y%m%d}",
+            subtitle=STATUS_NAMES.get(status, "الكل"),
+            tables=[Table([Col("م", "int", .4), Col("رقم السند", "int", .7), Col("المورد", "text", 2), Col("فاتورة الشركة", "text", 1.2),
+                           Col("إجمالي الفاتورة", "money"), Col("الأصناف", "int", .6), Col("أُنشئ", "text", 1.2),
+                           Col("الحالة", "text", .9), Col("فيها فرق", "int", .6)],
+                          [[i, r.id, r.supplier.name, r.supplier_invoice_no or "", r.supplier_invoice_total, len(r.lines),
+                            fmt_dt(r.created_at), STATUS_NAMES.get(r.status, r.status), sum(1 for l in r.lines if l.diff_base)]
+                           for i, r in enumerate(items, 1)])]))
+    return render(request, "receipts.html", {"items": items, "status": status, "pending": pending, "exportable": True})
 
 
 def receipt_form_ctx(db, r=None, form=None, errors=None):
@@ -694,7 +920,29 @@ def receipt_detail(rid: int, request: Request, user=Depends(need["receipts"]), d
     if not r:
         return redirect("/receipts")
     value, estimated = services.receipt_value(r) if r.status == "received" else (None, False)
-    return render(request, "receipt.html", {"r": r, "value": value, "value_estimated": estimated,
+    if export_format(request):
+        rows = []
+        for i, l in enumerate(r.lines, 1):
+            cost = l.unit_cost if l.unit_cost is not None else l.product.cost
+            d = l.diff_base
+            rows.append([i, l.product.name + (" (زائد)" if l.extra else ""), "" if l.extra else l.ordered, MODES.get(l.mode, l.mode),
+                         l.received, MODES.get(l.received_mode or l.mode, ""),
+                         "" if d is None else ("مطابق" if d == 0 else (f"ناقص {base_text(l.product, -d)}" if d < 0 else f"زيادة {base_text(l.product, d)}")),
+                         cost, (l.received_base or 0) * cost, l.note or ""])
+        return send_report(request, Report(
+            title=f"سند استلام رقم {r.id}", filename=f"receipt-{r.id}",
+            info=[("المورد", r.supplier.name), ("الحالة", STATUS_NAMES.get(r.status, r.status)),
+                  ("رقم فاتورة الشركة", r.supplier_invoice_no or "—"),
+                  ("إجمالي الفاتورة", fmt_money(r.supplier_invoice_total) if r.supplier_invoice_total is not None else "—"),
+                  ("أُنشئ", fmt_dt(r.created_at)), ("استلمه", f"{r.receiver.name if r.receiver else '—'} · {fmt_dt(r.received_at)}"),
+                  ("قيمة المستلم بسعر الشراء", fmt_money(value) + (" (تقريبية)" if estimated else "") if value is not None else "—"),
+                  ("ملاحظة", r.note or "—")],
+            tables=[Table([Col("م", "int", .4), Col("الصنف", "text", 2.4), Col("المطلوب", "qty", .7), Col("الوحدة", "text", .6),
+                           Col("المستلم", "qty", .7), Col("وحدة الاستلام", "text", .7), Col("الفرق", "text", 1.3),
+                           Col("سعر الشراء", "money", .8), Col("القيمة", "money", .9), Col("ملاحظة", "text", 1.2)], rows,
+                          totals=["", "الإجمالي", "", "", "", "", "", "", value or 0, ""] if value is not None else None)],
+            signatures=["المستلم", "مندوب المورد", "المدير"]))
+    return render(request, "receipt.html", {"r": r, "value": value, "value_estimated": estimated, "exportable": True,
                                             **history(db, "receipts", r.id, "receipt_lines", [l.id for l in r.lines])})
 
 
@@ -835,7 +1083,20 @@ def sales(request: Request, d_from: str = "", d_to: str = "", employee: int = 0,
     flags = services.ministry_flags(db, items)
     if problems:
         items = [s for s in items if flags[s.id]]
-    return render(request, "sales.html", {
+    if export_format(request):
+        names = {"duplicate": "مكررة", "total": "الإجمالي مختلف", "missing": "من غير رقم"}
+        return send_report(request, Report(
+            title="المبيعات", filename=f"sales-{f}-{t}",
+            subtitle=(f"فاتورة الوزارة {mi}" if mi else f"من {f} إلى {t}") + (" · اللي فيها مشكلة بس" if problems else ""),
+            tables=[Table([Col("م", "int", .4), Col("رقم الفاتورة", "int", .8), Col("رقم الجهاز", "int", .6),
+                           Col("فاتورة الوزارة", "text", 1.3), Col("الوقت", "text", 1.2), Col("الموظف", "text", 1.1),
+                           Col("الجهاز", "text", 1), Col("الأصناف", "int", .6), Col("إجمالي الوزارة", "money", .9),
+                           Col("المبلغ", "money", .9), Col("ملاحظة", "text", 1.1)],
+                          [[i, x.no, x.device_no or "", x.ministry_invoice_no or "", fmt_dt(x.created_at),
+                            x.employee.name if x.employee else "", x.device.name, len(x.lines), x.ministry_total, x.total,
+                            "، ".join(names[k] for k in flags[x.id])] for i, x in enumerate(items, 1)],
+                          totals=["", "", "", "", f"{len(items)} فاتورة", "", "", "", "", sum((x.total for x in items), Decimal(0)), ""])]))
+    return render(request, "sales.html", {"exportable": True,
         "items": items, "d_from": f, "d_to": t, "employee": employee, "mi": mi, "problems": problems, "flags": flags,
         "problem_count": sum(1 for v in flags.values() if v),
         "total": sum((s.total for s in items), Decimal(0)),
@@ -852,7 +1113,18 @@ def sale_detail(sid: str, request: Request, user=Depends(need["sales"]), db: Ses
         return redirect("/sales")
     same = db.scalars(select(Sale).where(Sale.ministry_invoice_no == s.ministry_invoice_no, Sale.id != s.id)
                       .order_by(Sale.created_at)).all() if s.ministry_invoice_no else []
-    return render(request, "sale.html", {"s": s, "same": same, "flags": services.ministry_flags(db, [s])[s.id],
+    if export_format(request):
+        return send_report(request, Report(
+            title=f"فاتورة رقم {s.no}", filename=f"invoice-{s.no}",
+            info=[("التاريخ", fmt_dt(s.created_at)), ("فاتورة الوزارة", s.ministry_invoice_no or "—"),
+                  ("الموظف", s.employee.name if s.employee else "—"), ("الجهاز", s.device.name + (f" (#{s.device_no})" if s.device_no else "")),
+                  ("إجمالي الوزارة", fmt_money(s.ministry_total) if s.ministry_total is not None else "—"),
+                  ("الإجمالي", f"{fmt_money(s.total)} د.ك")],
+            tables=[Table([Col("م", "int", .4), Col("الصنف", "text", 3), Col("الكمية", "qty", .8), Col("الوحدة", "text", .7),
+                           Col("السعر", "money"), Col("الإجمالي", "money")],
+                          [[i, l.product.name, l.qty, MODES.get(l.mode, l.mode), l.unit_price, l.total] for i, l in enumerate(s.lines, 1)],
+                          totals=["", "الإجمالي", "", "", "", s.total])]))
+    return render(request, "sale.html", {"s": s, "same": same, "flags": services.ministry_flags(db, [s])[s.id], "exportable": True,
                                          **history(db, "sales", s.id, "sale_lines", [l.id for l in s.lines])})
 
 
@@ -881,17 +1153,22 @@ def reports(request: Request, d_from: str = "", d_to: str = "", user=Depends(nee
     totals = {"count": sum(d[1] for d in days), "sales": sum((d[2] or 0 for d in days), Decimal(0)),
               "cost": sum((d[3] or 0 for d in days), Decimal(0))}
     totals["profit"] = totals["sales"] - totals["cost"]
-    if request.query_params.get("csv"):
-        out = io.StringIO()
-        w = csv.writer(out)
-        w.writerow(["اليوم", "عدد الفواتير", "المبيعات", "التكلفة", "الربح"])
-        for d in days:
-            w.writerow([d[0], d[1], fmt_money(d[2]), fmt_money(d[3]), fmt_money((d[2] or 0) - (d[3] or 0))])
-        return Response("﻿" + out.getvalue(), media_type="text/csv; charset=utf-8",
-                        headers={"Content-Disposition": f"attachment; filename=sales-{f}-{t}.csv"})
+    if export_format(request):
+        return send_report(request, Report(
+            title="تقرير المبيعات", filename=f"report-{f}-{t}", subtitle=f"من {f} إلى {t}",
+            info=[("عدد الفواتير", totals["count"]), ("المبيعات", f"{fmt_money(totals['sales'])} د.ك"),
+                  ("التكلفة", f"{fmt_money(totals['cost'])} د.ك"), ("الربح", f"{fmt_money(totals['profit'])} د.ك")],
+            tables=[Table([Col("م", "int", .4), Col("اليوم", "text"), Col("عدد الفواتير", "int"), Col("المبيعات", "money"),
+                           Col("التكلفة", "money"), Col("الربح", "money")],
+                          [[i, d[0], d[1], d[2] or 0, d[3] or 0, (d[2] or 0) - (d[3] or 0)] for i, d in enumerate(days, 1)],
+                          title="المبيعات باليوم",
+                          totals=["", "الإجمالي", totals["count"], totals["sales"], totals["cost"], totals["profit"]]),
+                    Table([Col("م", "int", .4), Col("الصنف", "text", 3), Col("الكمية", "qty"), Col("المبيعات", "money")],
+                          [[i, p.name, q, tt] for i, (p, q, tt) in enumerate(top, 1)], title="أكتر 20 صنف مبيعاً"),
+                    Table([Col("م", "int", .4), Col("الموظف", "text", 2), Col("الفواتير", "int"), Col("المبيعات", "money")],
+                          [[i, n or "—", c, tt] for i, (n, c, tt) in enumerate(by_emp, 1)], title="حسب الموظف")]))
     return render(request, "reports.html", {"days": days, "top": top, "by_emp": by_emp, "totals": totals,
-                                            "d_from": f, "d_to": t,
-                                            "csv_url": "/reports?" + urlencode({"d_from": f, "d_to": t, "csv": 1})})
+                                            "d_from": f, "d_to": t, "exportable": True})
 
 
 # ---------- counts ----------
@@ -906,7 +1183,16 @@ def counts(request: Request, status: str = "submitted", user=Depends(need["count
     days = {}
     for c in items:
         days.setdefault(c.count_date, []).append(c)
-    return render(request, "counts.html", {"days": days, "status": status, "count": len(items)})
+    if export_format(request):
+        return send_report(request, Report(
+            title="الجرد", filename=f"counts-{datetime.now(TZ):%Y%m%d}", subtitle=STATUS_NAMES.get(status, "الكل"),
+            tables=[Table([Col("م", "int", .4), Col("تاريخ الجرد", "text", .9), Col("اللجنة", "text", .6), Col("رقم الجرد", "int", .6),
+                           Col("الموظف", "text", 1.2), Col("الجهاز", "text", 1), Col("خلص", "text", 1.1), Col("الأصناف", "int", .6),
+                           Col("فيها فرق", "int", .6), Col("الحالة", "text", .9)],
+                          [[i, c.count_date or "", c.committee or "", c.no, c.employee.name if c.employee else "", c.device.name,
+                            fmt_dt(c.finished_at), len(c.lines), sum(1 for l in c.lines if l.diff != 0), STATUS_NAMES.get(c.status, c.status)]
+                           for i, c in enumerate(items, 1)])]))
+    return render(request, "counts.html", {"days": days, "status": status, "count": len(items), "exportable": True})
 
 
 @router.get("/counts/day/{day}", response_class=HTMLResponse)
@@ -926,7 +1212,24 @@ def count_day_page(day: str, request: Request, user=Depends(need["counts"]), db:
     rows.sort(key=lambda r: (r["diff"] == 0, r["p"].name))
     value = sum((r["diff"] * r["p"].cost for r in rows if r["waiting"]), Decimal(0))
     during = services.sales_during_count(db, sessions, set(products))
-    return render(request, "count_day.html", {"day": d, "sessions": sessions, "rows": rows, "value": value, "during": during,
+    if export_format(request):
+        def diff_text(r):
+            return "مطابق" if r["diff"] == 0 else (f"ناقص {base_text(r['p'], -r['diff'])}" if r["diff"] < 0 else f"زيادة {base_text(r['p'], r['diff'])}")
+        return send_report(request, Report(
+            title=f"جرد يوم {d}", filename=f"count-day-{d}",
+            info=[("عدد اللجان", len(sessions)), ("الأصناف", len(rows)), ("فيها فرق", sum(1 for r in rows if r["diff"] != 0)),
+                  ("قيمة الفرق بسعر الشراء", f"{fmt_money(value)} د.ك")],
+            tables=[Table([Col("م", "int", .4), Col("اللجنة", "text", .7), Col("رقم الجرد", "int", .7), Col("الموظف", "text", 1.4),
+                           Col("الجهاز", "text", 1.2), Col("الأصناف", "int", .6), Col("الحالة", "text", .9)],
+                          [[i, x.committee or "—", x.no, x.employee.name if x.employee else "", x.device.name, len(x.lines),
+                            STATUS_NAMES.get(x.status, x.status)] for i, x in enumerate(sessions, 1)], title="اللجان"),
+                    Table([Col("م", "int", .4), Col("الصنف", "text", 2.4), Col("اللجان", "text", 1.8), Col("المعدود", "qty", .8),
+                           Col("في النظام", "qty", .8), Col("الفرق", "text", 1.3)],
+                          [[i, r["p"].name, "، ".join(f"لجنة {x.committee or '—'}: {fmt_qty(l.counted, r['p'].unit)}" for x, l in r["lines"]),
+                            r["total"], r["stock"], diff_text(r)] for i, r in enumerate(rows, 1)], title="الأصناف")],
+            note=(f"تنبيه: {len(during)} فاتورة اتعملت وقت الجرد على أصناف اتعدّت." if during else ""),
+            signatures=["رئيس اللجنة", "المدير"]))
+    return render(request, "count_day.html", {"day": d, "sessions": sessions, "rows": rows, "value": value, "during": during, "exportable": True,
                                               "waiting": [s for s in sessions if s.status == "submitted"]})
 
 
@@ -959,7 +1262,22 @@ def count_detail(cid: str, request: Request, user=Depends(need["counts"]), db: S
              "short": sum(1 for l in c.lines if l.diff < 0), "over": sum(1 for l in c.lines if l.diff > 0)}
     only = request.query_params.get("only") == "diff"
     lines = [l for l in c.lines if not only or l.diff != 0]
-    return render(request, "count.html", {"c": c, "value": value, "stats": stats, "lines": lines, "only": only,
+    if export_format(request):
+        def dt_(l):
+            return "مطابق" if l.diff == 0 else (f"ناقص {base_text(l.product, -l.diff)}" if l.diff < 0 else f"زيادة {base_text(l.product, l.diff)}")
+        return send_report(request, Report(
+            title=f"جرد رقم {c.no}" + (f" · لجنة {c.committee}" if c.committee else ""), filename=f"count-{c.no}",
+            subtitle="الفروق بس" if only else "",
+            info=[("تاريخ الجرد", c.count_date or "—"), ("اللجنة", c.committee or "—"),
+                  ("الموظف", c.employee.name if c.employee else "—"), ("الجهاز", c.device.name),
+                  ("الحالة", STATUS_NAMES.get(c.status, c.status)), ("راجعه", f"{c.reviewer.name} · {fmt_dt(c.reviewed_at)}" if c.reviewer else "—"),
+                  ("الأصناف", stats["all"]), ("قيمة الفرق بسعر الشراء", f"{fmt_money(value)} د.ك")],
+            tables=[Table([Col("م", "int", .4), Col("الصنف", "text", 2.6), Col("في النظام", "qty", .8), Col("المعدود", "qty", .8),
+                           Col("الفرق", "text", 1.3), Col("قيمة الفرق", "money", .9)],
+                          [[i, l.product.name, l.stock_at_sync, l.counted, dt_(l), l.diff * l.product.cost] for i, l in enumerate(lines, 1)],
+                          totals=["", "الإجمالي", "", "", "", value])],
+            signatures=["رئيس اللجنة", "المدير"]))
+    return render(request, "count.html", {"c": c, "value": value, "stats": stats, "lines": lines, "only": only, "exportable": True,
                                           "others": services.overlaps(db, c) if c.status == "submitted" else [],
                                           **history(db, "count_sessions", c.id, "count_lines", [l.id for l in c.lines])})
 
@@ -1218,19 +1536,16 @@ def price_log(request: Request, d_from: str = "", d_to: str = "", q: str = "", u
         p = p or db.scalar(select(Product).where(Product.name.ilike(f"%{q.strip()}%")).limit(1))
         pid = p.id if p else -1
     rows = _price_rows(db, services.price_history(db, pid, start, end))
-    if request.query_params.get("format") == "csv":
-        buf = io.StringIO()
-        w = csv.writer(buf)
-        w.writerow(["الوقت", "الصنف", "الباركود", "سعر البيع قبل", "سعر البيع بعد", "التغيير %", "سعر الشراء قبل",
-                    "سعر الشراء بعد", "مين", "السبب"])
-        for r in rows:
-            w.writerow([fmt_dt(r["e"].at), r["p"].name if r["p"] else r["pid"], r["p"].barcode if r["p"] else "",
-                        *(("" if v is None else fmt_money(v)) for v in r["price"]),
-                        "" if r["pct"] is None else f"{r['pct']:.1f}",
-                        *(("" if v is None else fmt_money(v)) for v in r["cost"]), r["who"], r["e"].reason or ""])
-        return Response("\ufeff" + buf.getvalue(), media_type="text/csv; charset=utf-8",
-                        headers={"Content-Disposition": f'attachment; filename="prices-{f_from}-{f_to}.csv"'})
-    return render(request, "prices.html", {"rows": rows, "d_from": f_from, "d_to": f_to, "q": q})
+    if export_format(request):
+        return send_report(request, Report(
+            title="سجل الأسعار", filename=f"prices-{f_from}-{f_to}", subtitle=f"من {f_from} إلى {f_to}" + (f" · {q.strip()}" if q.strip() else ""),
+            tables=[Table([Col("م", "int", .4), Col("الوقت", "text", 1.2), Col("الصنف", "text", 2.2), Col("الباركود", "text", 1.3),
+                           Col("البيع قبل", "money", .8), Col("البيع بعد", "money", .8), Col("التغيير %", "text", .7),
+                           Col("الشراء قبل", "money", .8), Col("الشراء بعد", "money", .8), Col("مين", "text", 1.1)],
+                          [[i, fmt_dt(r["e"].at), r["p"].name if r["p"] else f"#{r['pid']}", r["p"].barcode if r["p"] else "",
+                            r["price"][0], r["price"][1], "" if r["pct"] is None else f"{r['pct']:+.1f}%", r["cost"][0], r["cost"][1],
+                            r["who"]] for i, r in enumerate(rows, 1)])]))
+    return render(request, "prices.html", {"rows": rows, "d_from": f_from, "d_to": f_to, "q": q, "exportable": True})
 
 
 @router.get("/accounting/log")
@@ -1260,7 +1575,18 @@ def audit_log(request: Request, d_from: str = "", d_to: str = "", what: str = ""
     per = 100
     page = max(1, page)
     entries = db.scalars(q.order_by(AuditLog.at.desc(), AuditLog.id.desc()).offset((page - 1) * per).limit(per)).all()
-    return render(request, "audit.html", {"rows": audit_view(db, entries), "links": {e.id: audit_link(db, e) for e in entries},
+    if export_format(request):
+        allrows = audit_view(db, db.scalars(q.order_by(AuditLog.at.desc(), AuditLog.id.desc()).limit(5000)).all())
+        return send_report(request, Report(
+            title="السجل", filename=f"log-{f_from}-{f_to}", subtitle=f"من {f_from} إلى {f_to}" + (" · أول 5000 سطر" if total > 5000 else ""),
+            tables=[Table([Col("م", "int", .4), Col("الوقت", "text", 1.1), Col("مين", "text", 1.2), Col("إيه", "text", 1),
+                           Col("اتغيّر", "text", 3.5), Col("السبب", "text", 1.3)],
+                          [[i, fmt_dt(h["e"].at), h["who"], h["what"] + (f" ({h['action'][0]})" if h["action"] else ""),
+                            "\n".join(f"{lbl}: {new}" if (h["is_event"] or h["e"].action == "INSERT") else
+                                      (f"{lbl}: {old}" if h["e"].action == "DELETE" else f"{lbl}: {old} ← {new}")
+                                      for lbl, old, new in h["changes"]), h["e"].reason or ""]
+                           for i, h in enumerate(allrows, 1)])]))
+    return render(request, "audit.html", {"exportable": True, "rows": audit_view(db, entries), "links": {e.id: audit_link(db, e) for e in entries},
                                           "offset": (page - 1) * per,
                                           "d_from": f_from, "d_to": f_to, "what": what, "manual": manual,
                                           "groups": [(g, LOG_GROUPS[g][0]) for g in allowed],
@@ -1339,8 +1665,15 @@ def all_roles(db):
 
 @router.get("/employees", response_class=HTMLResponse)
 def employees(request: Request, user=Depends(need["employees"]), db: Session = Depends(get_db)):
-    return render(request, "employees.html", {
-        "items": db.scalars(select(Employee).order_by(Employee.active.desc(), Employee.name)).all()})
+    items = db.scalars(select(Employee).order_by(Employee.active.desc(), Employee.name)).all()
+    if export_format(request):
+        return send_report(request, Report(
+            title="الموظفين", filename=f"employees-{datetime.now(TZ):%Y%m%d}",
+            tables=[Table([Col("م", "int", .4), Col("الاسم", "text", 2), Col("الدور", "text", 1.2), Col("اسم المستخدم للوحة", "text", 1.3),
+                           Col("الحالة", "text", .7)],
+                          [[i, e.name, e.role_name, e.username if e.can_dashboard else "", "فعّال" if e.active else "موقوف"]
+                           for i, e in enumerate(items, 1)])]))
+    return render(request, "employees.html", {"items": items, "exportable": True})
 
 
 @router.get("/employees/new", response_class=HTMLResponse)
@@ -1403,7 +1736,14 @@ templates.env.globals.update(PERM_GROUPS=PERM_GROUPS)
 @router.get("/roles", response_class=HTMLResponse)
 def roles(request: Request, user=Depends(need["employees"]), db: Session = Depends(get_db)):
     used = dict(db.execute(select(Employee.role, func.count()).where(Employee.active.is_(True)).group_by(Employee.role)).all())
-    return render(request, "roles.html", {"items": all_roles(db), "used": used})
+    items = all_roles(db)
+    if export_format(request):
+        return send_report(request, Report(
+            title="الأدوار والصلاحيات", filename="roles",
+            tables=[Table([Col("م", "int", .4), Col("الدور", "text", 1.2)] + [Col(g, "text", 2.5) for g in PERM_GROUPS] + [Col("موظفين", "int", .6)],
+                          [[i, r.name] + ["، ".join(l.split(":")[0] for k, l in perms if k in r.perms) or "—" for perms in PERM_GROUPS.values()]
+                           + [used.get(r.key, 0)] for i, r in enumerate(items, 1)])]))
+    return render(request, "roles.html", {"items": items, "used": used, "exportable": True})
 
 
 @router.get("/roles/new", response_class=HTMLResponse)
@@ -1476,7 +1816,15 @@ def role_delete(key: str, request: Request, user=Depends(need["employees"]), db:
 @router.get("/devices", response_class=HTMLResponse)
 def devices(request: Request, user=Depends(need["devices"]), db: Session = Depends(get_db)):
     items = db.scalars(select(Device).order_by(Device.active.desc(), Device.name)).all()
-    return render(request, "devices.html", {"items": items, "now": now(), "show_code": request.session.pop("show_code", None)})
+    if export_format(request):
+        return send_report(request, Report(
+            title="الأجهزة", filename=f"devices-{datetime.now(TZ):%Y%m%d}",
+            tables=[Table([Col("م", "int", .4), Col("الجهاز", "text", 2), Col("الحالة", "text", 1), Col("آخر اتصال", "text", 1.2),
+                           Col("نسخة التطبيق", "text", 1)],
+                          [[i, d.name, "موقوف" if not d.active else ("مربوط" if d.token_hash else "مش مربوط"), fmt_dt(d.last_seen),
+                            d.app_version or ""] for i, d in enumerate(items, 1)])]))
+    return render(request, "devices.html", {"items": items, "now": now(), "show_code": request.session.pop("show_code", None),
+                                            "exportable": True})
 
 
 @router.post("/devices")

@@ -110,6 +110,10 @@ def test_statement_summary_detail_payments_and_clearance(admin_client, device_cl
     # Before the payment's date the balance is still open; the opening balance carries earlier vouchers.
     later = admin_client.get(f"/suppliers/{sid}/statement?d_from=2026-11-05&d_to=2026-12-31").text
     assert "رصيد أول المدة" in later and "براءة ذمة" in later
-    csv = admin_client.get(f"/suppliers/{sid}/statement?format=csv&d_from=2026-01-01&d_to=2026-12-31")
-    assert csv.headers["content-type"].startswith("text/csv") and "778899" in csv.text
+    pdf = admin_client.get(f"/suppliers/{sid}/statement?format=pdf&view=detail&d_from=2026-01-01&d_to=2026-12-31")
+    assert pdf.headers["content-type"] == "application/pdf" and pdf.content[:4] == b"%PDF"
+    xlsx = admin_client.get(f"/suppliers/{sid}/statement?format=xlsx&d_from=2026-01-01&d_to=2026-12-31")
+    from openpyxl import load_workbook
+    text = " ".join(str(c) for row in load_workbook(io.BytesIO(xlsx.content)).active.iter_rows(values_only=True) for c in row if c)
+    assert "براءة ذمة" in text and "دفعة شيك 778899" in text
     assert "0.000" in admin_client.get("/suppliers").text

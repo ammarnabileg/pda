@@ -1,6 +1,6 @@
 {% extends "base.html" %}{% block title %}التقارير{% endblock %}
 {% block content %}
-<div class="bar"><h1>تقرير المبيعات</h1><a class="btn light" href="{{ csv_url }}" title="ملف CSV بيفتح في Excel">تنزيل ملف CSV (يفتح في Excel)</a></div>
+<div class="bar"><h1>تقرير المبيعات</h1></div>
 <form class="bar card" method="get">
   <div><label>من</label><input type="date" name="d_from" value="{{ d_from }}"></div>
   <div><label>إلى</label><input type="date" name="d_to" value="{{ d_to }}"></div>

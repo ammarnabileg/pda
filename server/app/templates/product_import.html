@@ -1,22 +1,28 @@
 {% extends "base.html" %}{% block title %}استيراد الأصناف{% endblock %}
 {% block content %}
-<div class="bar"><h1>استيراد الأصناف من ملف</h1><a class="btn light" href="/products">رجوع</a></div>
+<div class="bar"><h1>استيراد الأصناف من Excel</h1><a class="btn light" href="/products">رجوع</a></div>
 {% include "_errors.html" %}
 <div class="card">
-  <p>1. نزّل <a href="/products-import/template.csv">ملف النموذج</a> وافتحه في Excel.</p>
-  <p>2. املأ الأصناف بنفس الأعمدة: <code dir="ltr">{{ columns|join(", ") }}</code></p>
+  <h2 style="margin-top:0">١. نزّل الملف</h2>
+  <div class="bar">
+    <a class="btn" href="/products-import/template.xlsx">ملف النموذج (Excel)</a>
+    <a class="btn light" href="/products-import/template.xlsx?current=1">الأصناف الحالية بنفس الشكل (لتعديل الأسعار)</a>
+  </div>
+  <h2>٢. املأه في Excel</h2>
+  <p>الأعمدة: <b>{{ columns|join("، ") }}</b>. في الملف ورقة «تعليمات» فيها الشرح.</p>
   <ul class="muted">
-    <li><b>unit</b>: <code>piece</code> بالحبة أو <code>kg</code> بالكيلو.</li>
-    <li><b>carton</b>: عدد الحبات في الكرتون، أو 0.</li>
-    <li><b>مفيش عمود للرصيد</b>: الرصيد مابيتعدلش من الاستيراد. الصنف الجديد بيبدأ بـ 0، والرصيد بييجي من سند استلام أو جرد. لو الملف فيه عمود stock، بيتجاهل.</li>
-    <li><b>carton_barcode</b> (اختياري): باركود الكرتون.</li>
-    <li><b>extra_barcodes</b> (اختياري): باركودات تانية للحبة، بينهم مسافة.</li>
-    <li>لو الباركود الأساسي موجود قبل كده، الصنف بيتحدّث بدل ما يتكرر، والباركودات التانية اللي عليه بتفضل.</li>
+    <li><b>الوحدة</b>: «حبة» أو «كيلو» (من القائمة في الملف).</li>
+    <li><b>الباركود</b>: عموده متظبط كنص علشان Excel مايحوّلوش لـ 6.28E+12 ولا يشيل الأصفار اللي على الشمال.</li>
+    <li><b>حبات الكرتون</b>: عدد الحبات في الكرتون، أو 0.</li>
+    <li><b>باركود الكرتون</b> و<b>باركودات تانية</b> (اختياري): لو أكتر من واحد، بينهم مسافة.</li>
+    <li><b>مفيش عمود للرصيد</b>: الصنف الجديد بيبدأ بـ 0، والرصيد بييجي من سند استلام أو جرد.</li>
+    <li>لو الباركود موجود قبل كده، الصنف بيتحدّث بدل ما يتكرر، وكل تغيير سعر بيتسجل في سجل الأسعار.</li>
   </ul>
-  <p>3. احفظه من Excel بصيغة <b>CSV UTF-8</b> وارفعه هنا. لو فيه أي سطر غلط، مفيش حاجة هتتحفظ لحد ما تصلحه.</p>
+  <h2>٣. ارفعه</h2>
   <form method="post" enctype="multipart/form-data" class="bar">
-    <input type="file" name="file" accept=".csv,text/csv" required style="max-width:360px">
+    <input type="file" name="file" accept=".xlsx,.csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,text/csv" required style="max-width:360px">
     <button class="btn">رفع واستيراد</button>
   </form>
+  <p class="hint">لو فيه أي سطر غلط، مفيش حاجة بتتحفظ، والصفحة بتقولك رقم السطر والغلط. ملفات CSV القديمة لسه شغالة.</p>
 </div>
 {% endblock %}

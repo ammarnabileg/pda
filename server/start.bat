@@ -8,6 +8,8 @@ if not errorlevel 1 (
   exit /b
 )
 if not exist .venv (echo Run setup.bat first. & pause & exit /b 1)
+REM New versions can need new packages (e.g. Excel and PDF export). Needs the internet once; skipped if offline.
+.venv\Scripts\python -m pip install --quiet --disable-pip-version-check -r requirements.txt || echo Could not update packages (no internet?). Starting anyway.
 echo Starting the server here. Keep this window open.
 .venv\Scripts\python run.py
 pause

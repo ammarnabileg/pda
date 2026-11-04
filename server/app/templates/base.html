@@ -58,7 +58,7 @@
     </div>
   </nav>
   <main class="main">
-    {% if user %}<div class="page-tools no-print">{% if not user.is_admin %}<span class="ro-note">عرض وطباعة بس · التعديل للمدير</span>{% endif %}<button type="button" class="btn small light" onclick="print()">طباعة الصفحة</button></div>{% endif %}
+    {% if user %}<div class="page-tools no-print">{% if not user.is_admin %}<span class="ro-note">عرض وطباعة بس · التعديل للمدير</span>{% endif %}{% if export_links %}<a class="btn small light" href="{{ export_links.xlsx }}">تنزيل Excel</a><a class="btn small light" href="{{ export_links.pdf }}">تنزيل PDF</a>{% endif %}<button type="button" class="btn small light" onclick="print()">طباعة الصفحة</button></div>{% endif %}
     {% if flash %}<div class="alert {{ flash.kind }}" role="status">{{ icon('ok' if flash.kind == 'ok' else 'warn') }} {{ flash.msg }}</div>{% endif %}
     {% block content %}{% endblock %}
   </main>

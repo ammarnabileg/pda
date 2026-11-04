@@ -104,8 +104,12 @@ def test_price_log(admin_client, db, seed):
     assert "+6.1%" in page
     assert "2.600 → <b>2.500</b>" in admin_client.get(f"/products/{rice.id}").text
     assert "2.600" not in admin_client.get("/prices?q=سكر").text
-    csv = admin_client.get("/prices?format=csv")
-    assert csv.headers["content-type"].startswith("text/csv") and "2.500" in csv.text
+    xlsx = admin_client.get("/prices?format=xlsx")
+    assert xlsx.headers["content-type"].startswith("application/vnd.openxmlformats")
+    from openpyxl import load_workbook
+    import io
+    cells = [c for row in load_workbook(io.BytesIO(xlsx.content)).active.iter_rows(values_only=True) for c in row]
+    assert 2.5 in cells and 2.6 in cells
 
 
 def test_day_page_warns_about_sales_during_the_count(device_client, seed, db, admin_client):

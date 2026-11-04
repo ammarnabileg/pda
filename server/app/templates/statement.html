@@ -3,7 +3,6 @@
 {% block title %}{{ 'براءة ذمة' if clear else 'كشف حساب' }} {{ s.name }}{% endblock %}
 {% block content %}
 <div class="bar no-print"><h1>{{ s.name }}: {{ 'كشف حساب تفصيلي' if view == 'detail' else 'كشف حساب إجمالي' }}</h1>
-  <a class="btn light" href="?d_from={{ d_from }}&d_to={{ d_to }}&format=csv">تنزيل Excel (CSV)</a>
   <a class="btn light" href="/suppliers">رجوع</a></div>
 <form class="card bar no-print" method="get">
   <div><label for="d_from">من</label><input type="date" id="d_from" name="d_from" value="{{ d_from }}"></div>

@@ -1,6 +1,6 @@
 :root{--bg:#f2f4f3;--card:#fff;--ink:#16211c;--muted:#5b6862;--line:#d8dfdb;--head:#123f37;--green:#0a6b3d;--green-2:#e1f2e8;--red:#b42318;--red-2:#fdeceb;--orange:#9a5200;--orange-2:#fff0dc;--blue:#1d4fd8;--blue-2:#e5ecfd}
 *{box-sizing:border-box}
-body{margin:0;background:var(--bg);color:var(--ink);font-family:system-ui,"Segoe UI","Noto Sans Arabic",Tahoma,sans-serif;font-size:16px;line-height:1.5}
+body{margin:0;background:var(--bg);color:var(--ink);font-family:"Noto Sans Arabic",system-ui,"Segoe UI",Tahoma,sans-serif;font-size:16px;line-height:1.5}
 a{color:var(--blue);text-decoration:none}a:hover{text-decoration:underline}
 .layout{display:flex;min-height:100vh}
 .side{width:220px;background:var(--head);color:#fff;padding:16px 10px;flex:none;position:sticky;top:0;height:100vh;overflow:auto}
@@ -101,3 +101,6 @@ legend{font-weight:800;padding:0 6px}
 .signs div{border-top:1px solid #333;padding-top:6px;text-align:center}
 @media print{.invoice-files img{height:220px}}
 @media print{.page-tools,.no-print{display:none!important}}
+/* Same Arabic font as the PDF exports, bundled so it works offline. */
+@font-face{font-family:"Noto Sans Arabic";src:url("/static/fonts/NotoSansArabic-Regular.ttf") format("truetype");font-weight:400;font-display:swap}
+@font-face{font-family:"Noto Sans Arabic";src:url("/static/fonts/NotoSansArabic-Bold.ttf") format("truetype");font-weight:700;font-display:swap}
