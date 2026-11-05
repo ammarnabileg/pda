@@ -255,6 +255,8 @@ def push_receipt(db: Session, device: Device, data: dict):
         if line.received is None:
             line.received, line.received_mode = Decimal(0), line.mode
         line.unit_cost = line.product.cost
+        if line.product.supplier_id is None:  # first delivery tells whose goods it is
+            line.product.supplier_id = r.supplier_id
         move_stock(db, line.product, line.received_base, "receipt", ref=f"R-{r.id}", employee_id=emp)
     r.status = "received"
     r.received_at = _parse_time(data.get("received_at"))
@@ -322,6 +324,8 @@ def approve_receipt(db: Session, r: Receipt, user_id: int, quantities: dict | No
     db.flush()
     for line in r.lines:
         line.unit_cost = line.product.cost
+        if line.product.supplier_id is None:
+            line.product.supplier_id = r.supplier_id
         move_stock(db, line.product, line.received_base, "receipt", ref=f"R-{r.id}", employee_id=user_id)
     r.status = "received"
     r.approved_by, r.approved_at = user_id, now()
@@ -734,3 +738,54 @@ def barcode_action(db: Session, p: Product, data: dict) -> str:
     bump(db, p)
     return msg
 
+
+
+# ---------- Supplier clearance (براءة الذمة), as the co-op prints it ----------
+
+def supplier_clearance(db: Session, supplier, start: date | None, end: date):
+    """Per product of this supplier, at purchase price: opening (before start), movements (goods received on
+    this supplier's vouchers, plus count differences), sales, and balance = opening + movements - sales.
+    The balance is the value of the supplier's goods still in the co-op. start=None means from the beginning."""
+    from datetime import time as dtime
+
+    stop = datetime.combine(end + timedelta(days=1), dtime.min, LOCAL_TZ)
+    begin = datetime.combine(start, dtime.min, LOCAL_TZ) if start else None
+    own = set(db.scalars(select(Product.id).where(Product.supplier_id == supplier.id)))
+    acc = {}
+
+    def add(pid, when, value, kind):
+        if when >= stop:
+            return
+        row = acc.setdefault(pid, {"opening": Decimal(0), "moves": Decimal(0), "sales": Decimal(0)})
+        if begin is not None and when < begin:
+            row["opening"] += value if kind == "moves" else -value
+        else:
+            row[kind] += value
+
+    received = db.scalars(select(Receipt).where(Receipt.supplier_id == supplier.id, Receipt.status == "received")).all()
+    for r in received:
+        when = r.received_at or r.approved_at or r.created_at
+        for line in r.lines:
+            cost = line.unit_cost if line.unit_cost is not None else line.product.cost
+            add(line.product_id, when, (line.received_base or Decimal(0)) * cost, "moves")
+            if line.product.supplier_id is None:
+                own.add(line.product_id)
+    if own:
+        for pid, when, value in db.execute(
+                select(SaleLine.product_id, Sale.created_at, SaleLine.qty * SaleLine.unit_cost)
+                .join(Sale, Sale.id == SaleLine.sale_id).where(SaleLine.product_id.in_(own), Sale.created_at < stop)):
+            add(pid, when, value, "sales")
+        for pid, when, delta, cost in db.execute(
+                select(StockMove.product_id, StockMove.created_at, StockMove.delta, Product.cost)
+                .join(Product, Product.id == StockMove.product_id)
+                .where(StockMove.product_id.in_(own), StockMove.reason == "count", StockMove.created_at < stop)):
+            add(pid, when, delta * cost, "moves")
+    products = {p.id: p for p in db.scalars(select(Product).where(Product.id.in_(set(acc) | own)))} if (acc or own) else {}
+    rows = []
+    for pid, p in products.items():
+        v = acc.get(pid, {"opening": Decimal(0), "moves": Decimal(0), "sales": Decimal(0)})
+        o, m, s_ = d3(v["opening"]), d3(v["moves"]), d3(v["sales"])
+        rows.append({"p": p, "opening": o, "moves": m, "sales": s_, "balance": d3(o + m - s_)})
+    rows.sort(key=lambda r: (r["p"].code or "~", r["p"].name))
+    totals = {k: d3(sum((r[k] for r in rows), Decimal(0))) for k in ("opening", "moves", "sales", "balance")}
+    return {"rows": rows, "totals": totals, "start": start, "end": end}

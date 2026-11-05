@@ -1,0 +1,36 @@
+{% extends "base.html" %}
+{% block title %}{{ title }} · {{ s.name }}{% endblock %}
+{% block content %}
+<div class="bar no-print"><h1>{{ title }}</h1><a class="btn light" href="/suppliers">رجوع</a></div>
+<form class="card bar no-print" method="get">
+  <input type="hidden" name="view" value="{{ 'detail' if detail else 'summary' }}">
+  <div><label for="d_from">من (اختياري)</label><input type="date" id="d_from" name="d_from" value="{{ d_from }}"></div>
+  <div><label for="d_to">حتى</label><input type="date" id="d_to" name="d_to" value="{{ d_to }}"></div>
+  <button class="btn" style="align-self:end">عرض</button>
+  <div class="tabs" style="align-self:end;margin:0"><a href="?view=detail&d_from={{ d_from }}&d_to={{ d_to }}" class="{{ 'on' if detail }}">تفصيلي أصناف</a><a href="?view=summary&d_from={{ d_from }}&d_to={{ d_to }}" class="{{ 'on' if not detail }}">لمورد</a></div>
+</form>
+<div class="card">
+  <div class="statement-head">
+    <div><b>{{ COOP_NAME }}</b></div>
+    <div style="text-align:center"><h2 style="margin:0">{{ title }}</h2>{% if d_from %}<span class="muted">من {{ d_from }} إلى {{ d_to }}</span>{% endif %}</div>
+    <div style="text-align:left"><span class="muted">المستخدم:</span> {{ user.name }}<br><span class="muted">تاريخ اليوم:</span> {{ today }}</div>
+  </div>
+  <p style="font-size:18px;margin:12px 0"><span class="muted">المورد</span> <b>{{ s.no or '' }}</b> &nbsp; <b>{{ s.name }}</b></p>
+  {% set t = cl.totals %}
+  {% if detail %}
+  <div class="table-wrap" style="max-height:none"><table><thead><tr><th class="num">م</th><th>رقم الصنف</th><th>الصنف</th><th class="num">الافتتاحي</th><th class="num">الحركات</th><th class="num">المبيعات</th><th class="num">الرصيد</th></tr></thead>
+  {% for r in cl.rows %}<tr><td class="num">{{ loop.index }}</td><td dir="ltr" style="text-align:right">{{ r.p.code or '—' }}</td><td><a href="/products/{{ r.p.id }}">{{ r.p.name }}</a></td>
+    <td class="num">{{ r.opening|money if r.opening else '' }}</td><td class="num">{{ r.moves|money }}</td><td class="num">{{ r.sales|money }}</td><td class="num"><b>{{ r.balance|money }}</b></td></tr>
+  {% else %}<tr><td colspan="7" class="muted">مفيش أصناف للمورد ده. اختار المورد في صفحة كل صنف، أو في عمود «رقم المورد» وإنت بتستورد.</td></tr>{% endfor %}
+  <tr><th colspan="3">الإجمالي للمورد</th><th class="num">{{ t.opening|money if t.opening else '' }}</th><th class="num">{{ t.moves|money }}</th><th class="num">{{ t.sales|money }}</th><th class="num">{{ t.balance|money }}</th></tr>
+  </table></div>
+  {% else %}
+  <div class="table-wrap" style="max-height:none"><table><thead><tr><th>المورد</th><th class="num">الافتتاحي</th><th class="num">الحركات</th><th class="num">المبيعات</th><th class="num">الرصيد</th></tr></thead>
+  <tr><td>{{ s.no or '' }} {{ s.name }}</td><td class="num">{{ t.opening|money if t.opening else '' }}</td><td class="num">{{ t.moves|money }}</td><td class="num">{{ t.sales|money }}</td><td class="num"><b>{{ t.balance|money }}</b></td></tr>
+  <tr><th>الإجمالي</th><th class="num">{{ t.opening|money if t.opening else '' }}</th><th class="num">{{ t.moves|money }}</th><th class="num">{{ t.sales|money }}</th><th class="num">{{ t.balance|money }}</th></tr>
+  </table></div>
+  {% endif %}
+  <p class="hint">القيم بسعر الشراء. الحركات = البضاعة المستلمة على سندات المورد + فروق الجرد المعتمد. المبيعات = اللي اتباع من أصناف المورد. الرصيد = الافتتاحي + الحركات − المبيعات (قيمة بضاعة المورد اللي لسه في الجمعية).</p>
+  <div class="signs"><div>توقيع وختم {{ COOP_NAME }}</div><div>توقيع مندوب «{{ s.name }}»</div></div>
+</div>
+{% endblock %}

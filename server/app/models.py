@@ -129,6 +129,8 @@ class Product(Base):
     barcode: Mapped[str] = mapped_column(String(40), unique=True)
     # The product's own number (رقم الصنف), as in the old system and the supplier's list. Unique when set.
     code: Mapped[str | None] = mapped_column(String(20), unique=True)
+    # The supplier whose goods this is: its clearance (براءة الذمة) counts this product's receipts and sales.
+    supplier_id: Mapped[int | None] = mapped_column(ForeignKey("suppliers.id"), index=True)
     name: Mapped[str] = mapped_column(String(200))
     unit: Mapped[str] = mapped_column(String(10), default="piece")
     price: Mapped[Decimal] = mapped_column(Money, default=0)
@@ -144,6 +146,7 @@ class Product(Base):
     extra_barcodes: Mapped[list["ProductBarcode"]] = relationship(
         back_populates="product", cascade="all, delete-orphan", order_by="ProductBarcode.id"
     )
+    supplier: Mapped["Supplier | None"] = relationship()
 
     def mode_name(self, mode: str) -> str:
         """كرتون / كجم / the product's own piece name (علبة, حبة ...)."""
@@ -190,6 +193,7 @@ class Supplier(Base):
     __tablename__ = "suppliers"
     id: Mapped[int] = mapped_column(primary_key=True)
     name: Mapped[str] = mapped_column(String(200), unique=True)
+    no: Mapped[int | None] = mapped_column(Integer, unique=True)  # رقم المورد, e.g. 879 (first digits of its products' numbers)
     phone: Mapped[str | None] = mapped_column(String(40))
     active: Mapped[bool] = mapped_column(Boolean, default=True)
 

@@ -380,6 +380,9 @@ def apply_product_form(db, p: Product, f, extra):
     p.barcode = str(f.get("barcode")).strip()
     if "code" in f:  # an import file without the column keeps the number the product has
         p.code = str(f.get("code") or "").strip() or None
+    if "supplier_id" in f:
+        sid = str(f.get("supplier_id") or "")
+        p.supplier_id = int(sid) if sid.isdigit() and db.get(Supplier, int(sid)) else None
     p.name = str(f.get("name")).strip()
     p.unit = f.get("unit")
     pn = str(f.get("piece_name") or "").strip()
@@ -401,6 +404,10 @@ def apply_product_form(db, p: Product, f, extra):
         p.extra_barcodes.append(ProductBarcode(code=code, mode=mode))
 
 
+def supplier_list(db):
+    return db.scalars(select(Supplier).order_by(Supplier.active.desc(), Supplier.no.nulls_last(), Supplier.name)).all()
+
+
 def form_ctx(p, form, errors=None, moves=None, **extra):
     if form is not None:
         barcodes = form_barcodes(form) if hasattr(form, "getlist") else []
@@ -410,8 +417,8 @@ def form_ctx(p, form, errors=None, moves=None, **extra):
 
 
 @router.get("/products/new", response_class=HTMLResponse)
-def product_new(request: Request, user=Depends(need["products"])):
-    return render(request, "product_form.html", form_ctx(None, {"unit": "piece", "active": "1", "carton": "0", "cost": "0", "min_stock": "0"}))
+def product_new(request: Request, user=Depends(need["products"]), db: Session = Depends(get_db)):
+    return render(request, "product_form.html", form_ctx(None, {"unit": "piece", "active": "1", "carton": "0", "cost": "0", "min_stock": "0"}, suppliers=supplier_list(db)))
 
 
 @router.post("/products/new")
@@ -420,7 +427,7 @@ async def product_create(request: Request, user=Depends(need["products"]), db: S
     extra = form_barcodes(f)
     errors = product_errors(db, None, f, extra)
     if errors:
-        return render(request, "product_form.html", form_ctx(None, f, errors), 400)
+        return render(request, "product_form.html", form_ctx(None, f, errors, suppliers=supplier_list(db)), 400)
     p = Product(stock=0)
     db.add(p)
     apply_product_form(db, p, f, extra)
@@ -455,7 +462,7 @@ def product_detail(pid: int, request: Request, user=Depends(need["products"]), d
                           [[i, fmt_dt(m.created_at), reasons.get(m.reason, m.reason), m.delta,
                             (f"فاتورة {sale_nos[m.ref]}" if m.ref in sale_nos else (m.note or m.ref or ""))]
                            for i, m in enumerate(moves, 1)], title="آخر 50 حركة مخزون")]))
-    return render(request, "product_form.html", form_ctx(p, None, moves=moves, sale_nos=sale_nos, exportable=True,
+    return render(request, "product_form.html", form_ctx(p, None, moves=moves, sale_nos=sale_nos, exportable=True, suppliers=supplier_list(db),
                   prices=_price_rows(db, services.price_history(db, p.id, limit=50)),
                   **history(db, "products", p.id, "product_barcodes", [b.id for b in p.extra_barcodes])))
 
@@ -469,7 +476,7 @@ async def product_update(pid: int, request: Request, user=Depends(need["products
     extra = form_barcodes(f)
     errors = product_errors(db, pid, f, extra)
     if errors:
-        return render(request, "product_form.html", form_ctx(p, f, errors), 400)
+        return render(request, "product_form.html", form_ctx(p, f, errors, suppliers=supplier_list(db)), 400)
     apply_product_form(db, p, f, extra)
     services.bump(db, p)
     db.commit()
@@ -478,13 +485,14 @@ async def product_update(pid: int, request: Request, user=Depends(need["products
 
 
 # No stock column: stock only changes through sales, vouchers, approved counts and corrections with a reason.
-IMPORT_COLUMNS = ["code", "barcode", "name", "unit", "price", "cost", "carton", "min_stock", "carton_barcode", "extra_barcodes"]
+IMPORT_COLUMNS = ["code", "barcode", "name", "unit", "price", "cost", "carton", "min_stock", "carton_barcode", "extra_barcodes",
+                  "supplier_no", "supplier_name"]
 # Column titles in the Excel template; files may use these or the English keys.
-IMPORT_TITLES = {"code": "رقم الصنف", "barcode": "الباركود", "name": "اسم الصنف", "unit": "الوحدة", "price": "سعر البيع", "cost": "سعر الشراء",
+IMPORT_TITLES = {"supplier_no": "رقم المورد", "supplier_name": "اسم المورد", "code": "رقم الصنف", "barcode": "الباركود", "name": "اسم الصنف", "unit": "الوحدة", "price": "سعر البيع", "cost": "سعر الشراء",
                  "carton": "حبات الكرتون", "min_stock": "حد الطلب", "carton_barcode": "باركود الكرتون",
                  "extra_barcodes": "باركودات تانية"}
 IMPORT_ALIASES = {**{k: k for k in IMPORT_COLUMNS}, **{v: k for k, v in IMPORT_TITLES.items()},
-                  "الصنف": "name", "الاسم": "name", "كود الصنف": "code", "كود الصنف القديم": "code", "رقم صنف": "code", "نوع البيع": "unit", "عدد الحبات في الكرتون": "carton",
+                  "الصنف": "name", "الاسم": "name", "كود الصنف": "code", "كود الصنف القديم": "code", "رقم صنف": "code", "المورد": "supplier_name", "نوع البيع": "unit", "عدد الحبات في الكرتون": "carton",
                   "الباركود الأساسي": "barcode", "باركودات إضافية": "extra_barcodes"}
 UNIT_ALIASES = {"piece": "piece", "حبة": "piece", "بالحبة": "piece", "حبه": "piece", "kg": "kg", "كيلو": "kg",
                 "بالكيلو": "kg", "كجم": "kg", "كيلوجرام": "kg", **{n: "piece" for n in PIECE_NAMES}, "علبه": "piece"}
@@ -568,10 +576,11 @@ def import_template_xlsx(products=None) -> bytes:
     dv.add(f"{unit_col}2:{unit_col}5001")
     rows = ([[p.code or "", p.barcode, p.name, p.unit_name, float(p.price), float(p.cost), p.carton,
               float(p.min_stock), " ".join(b.code for b in p.extra_barcodes if b.mode == "carton"),
-              " ".join(b.code for b in p.extra_barcodes if b.mode != "carton")] for p in products]
+              " ".join(b.code for b in p.extra_barcodes if b.mode != "carton"),
+              p.supplier.no if p.supplier and p.supplier.no else "", p.supplier.name if p.supplier else ""] for p in products]
             if products is not None else
-            [["00010001", "6281000123456", "أرز بسمتي ٥ كجم", "حبة", 2.45, 2.05, 6, 10, "16281000123453", "6281000123999"],
-             ["00010002", "2100000012345", "سكر أبيض", "كيلو", 0.35, 0.28, 0, 20, "", ""]])
+            [["00010001", "6281000123456", "أرز بسمتي ٥ كجم", "حبة", 2.45, 2.05, 6, 10, "16281000123453", "6281000123999", 1, "الشركة الكويتية للتموين"],
+             ["00010002", "2100000012345", "سكر أبيض", "كيلو", 0.35, 0.28, 0, 20, "", "", 1, "الشركة الكويتية للتموين"]])
     for r, row in enumerate(rows, start=2):
         for i, v in enumerate(row, start=1):
             c = ws.cell(row=r, column=i, value=v)
@@ -585,6 +594,7 @@ def import_template_xlsx(products=None) -> bytes:
         "طريقة الاستيراد",
         "1. املأ ورقة «الأصناف»: كل صنف في سطر، وأول سطر هو أسماء الأعمدة (ماتغيّرهوش).",
         "رقم الصنف: رقم الصنف عندكم (زي 00010001)، مايتكررش. لو موجود، الاستيراد بيلاقي الصنف بيه حتى لو الباركود اتغيّر.",
+        "رقم المورد واسم المورد: مورد الصنف، علشان براءة الذمة. لو المورد مش موجود، بيتعمل لوحده.",
         "2. الباركود: لازم يتكتب كنص (العمود متظبط كده). لو لزقت أرقام من مكان تاني، اتأكد إنها مااتحوّلتش لـ 6.28E+12.",
         "3. الوحدة: «حبة» أو «كيلو» من القائمة.",
         "4. حبات الكرتون: عدد الحبات في الكرتون، أو 0 لو مالوش كرتون.",
@@ -652,6 +662,20 @@ async def import_products(request: Request, user=Depends(need["products"]), db: 
             row[k] = row[k] or ("0" if k != "price" else "")
         row["active"] = "1"
         # Same product number first (the barcode may have changed), then the same main barcode.
+        sup_no, sup_name = row.get("supplier_no", "").strip(), row.get("supplier_name", "").strip()
+        if sup_no and not sup_no.isdigit():
+            errors.append(f"سطر {n}: رقم المورد «{sup_no}» لازم يكون أرقام")
+            continue
+        if sup_no or sup_name:
+            sup = (db.scalar(select(Supplier).where(Supplier.no == int(sup_no))) if sup_no else None) \
+                or (db.scalar(select(Supplier).where(Supplier.name == sup_name)) if sup_name else None)
+            if sup is None:  # a new supplier from the file
+                sup = Supplier(name=sup_name or f"مورد {sup_no}", no=int(sup_no) if sup_no else None)
+                db.add(sup)
+                db.flush()
+            elif sup_no and sup.no is None:
+                sup.no = int(sup_no)
+            row["supplier_id"] = str(sup.id)
         existing = (db.scalar(select(Product).where(Product.code == row["code"])) if row.get("code") else None) \
             or db.scalar(select(Product).where(Product.barcode == row.get("barcode", "")))
         extra = [(c, "carton") for c in row.get("carton_barcode", "").replace("|", " ").split() if c]
@@ -809,6 +833,43 @@ def statement_lines(st):
     return sorted(items, key=lambda x: x["sort"])
 
 
+@router.get("/suppliers/{sid}/clearance", response_class=HTMLResponse)
+def supplier_clearance(sid: int, request: Request, d_from: str = "", d_to: str = "", view: str = "summary",
+                       user=Depends(need["receipts"]), db: Session = Depends(get_db)):
+    """براءة الذمة as the co-op prints it: detailed per product, or one line for the supplier, up to a date."""
+    sup = db.get(Supplier, sid)
+    if not sup:
+        return redirect("/suppliers")
+    today = datetime.now(TZ).date()
+    start = parse_date(d_from, None) if d_from else None
+    end = parse_date(d_to, today)
+    cl = services.supplier_clearance(db, sup, start, end)
+    detail = view == "detail"
+    title = "براءة الذمة تفصيلي أصناف" if detail else f"براءة الذمة لمورد حتى {end}"
+    t = cl["totals"]
+    if export_format(request):
+        cols = [Col("م", "int", .4), Col("رقم الصنف", "text", 1), Col("الصنف", "text", 3), Col("الافتتاحي", "money"),
+                Col("الحركات", "money"), Col("المبيعات", "money"), Col("الرصيد", "money")]
+        if detail:
+            body = [[i, r["p"].code or "", r["p"].name, r["opening"] or None, r["moves"], r["sales"], r["balance"]]
+                    for i, r in enumerate(cl["rows"], 1)]
+            table = Table(cols, body, totals=["", "", "الإجمالي للمورد", t["opening"] or None, t["moves"], t["sales"], t["balance"]])
+        else:
+            table = Table([Col("المورد", "text", 3), Col("الافتتاحي", "money"), Col("الحركات", "money"), Col("المبيعات", "money"),
+                           Col("الرصيد", "money")],
+                          [[f"{sup.no or ''} {sup.name}".strip(), t["opening"] or None, t["moves"], t["sales"], t["balance"]]],
+                          totals=["الإجمالي", t["opening"] or None, t["moves"], t["sales"], t["balance"]])
+        return send_report(request, Report(
+            title=title, filename=f"clearance-{sup.no or sid}-{end}",
+            subtitle=(f"من {start} إلى {end}" if start else f"حتى {end}"),
+            info=[("المورد", f"{sup.no or ''} {sup.name}".strip()), ("المستخدم", user.name)],
+            tables=[table],
+            note="القيم بسعر الشراء. الحركات = البضاعة المستلمة على سندات المورد + فروق الجرد. الرصيد = الافتتاحي + الحركات − المبيعات.",
+            signatures=[f"توقيع وختم {config.COOP_NAME}", f"توقيع مندوب «{sup.name}»"]))
+    return render(request, "clearance.html", {"s": sup, "cl": cl, "detail": detail, "title": title, "d_from": start or "",
+                                              "d_to": end, "today": today, "exportable": True})
+
+
 @router.post("/suppliers/{sid}/payments")
 async def supplier_payment(sid: int, request: Request, user=Depends(admin_only), db: Session = Depends(get_db)):
     sup = db.get(Supplier, sid)
@@ -849,8 +910,16 @@ async def supplier_save(request: Request, user=Depends(need["products"]), db: Se
     if dup:
         flash(request, "فيه مورد بنفس الاسم", "error")
         return redirect("/suppliers")
+    raw_no = str(f.get("no", "")).strip()
+    if raw_no and not raw_no.isdigit():
+        flash(request, "رقم المورد لازم يكون أرقام", "error")
+        return redirect("/suppliers")
+    no = int(raw_no) if raw_no else None
+    if no is not None and db.scalar(select(Supplier.id).where(Supplier.no == no, Supplier.id != sid)):
+        flash(request, f"رقم المورد {no} مستخدم لمورد تاني", "error")
+        return redirect("/suppliers")
     s = db.get(Supplier, sid) if sid else Supplier()
-    s.name, s.phone = name, str(f.get("phone", "")).strip() or None
+    s.name, s.phone, s.no = name, str(f.get("phone", "")).strip() or None, no
     s.active = f.get("active", "1") == "1"
     db.add(s)
     db.commit()
