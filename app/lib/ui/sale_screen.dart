@@ -1,9 +1,12 @@
+import 'dart:convert';
+
 import 'package:flutter/material.dart';
 
 import '../data/models.dart';
 import '../util/feedback.dart';
 import '../util/format.dart';
 import '../util/ids.dart';
+import '../util/photo.dart';
 import 'history_screen.dart';
 import 'scan_helpers.dart';
 import 'scope.dart';
@@ -22,6 +25,10 @@ class _SaleScreenState extends State<SaleScreen> {
   // The ministry ration invoice this sale delivers: asked before the first item.
   String? ministryNo;
   int? ministryTotal; // fils, optional
+  // Photo of the original ministry invoice: {'id', 'ct', 'data' (base64)}. Required, kept apart from the draft
+  // lines so saving a scan does not rewrite a few hundred KB each time.
+  Map<String, dynamic>? ministryPhoto;
+  static const _photoKey = 'draft_sale_photo';
   String? lastKey; // last scanned line, highlighted until the next one
   String? lastAdded; // "+1 حبة" next to it
   String filter = '';
@@ -41,10 +48,12 @@ class _SaleScreenState extends State<SaleScreen> {
       ministryNo = draft['mi'] as String?;
       ministryTotal = draft['mt'] as int?;
     }
+    final ph = await db.getJson(_photoKey);
+    if (ph is Map) ministryPhoto = ph.cast<String, dynamic>();
     products.addAll(await db.productsByIds(lines.map((l) => l.productId)));
     lines.removeWhere((l) => !products.containsKey(l.productId));
     if (mounted) setState(() => loaded = true);
-    if (ministryNo == null && mounted) await _askMinistry();
+    if (!_ministryDone && mounted) await _askMinistry();
   }
 
   Future<void> _save() => AppScope.read(context).db.setJson(
@@ -53,9 +62,14 @@ class _SaleScreenState extends State<SaleScreen> {
   );
 
   /// Ministry invoice number (required) and its total; refused if this device already sold that invoice.
+  bool get _ministryDone => ministryNo != null && ministryPhoto != null;
+
   Future<bool> _askMinistry() async {
-    final r = await showAppSheet<(String, int?)>(context, _MinistrySheet(no: ministryNo ?? '', total: ministryTotal));
-    if (r == null || !mounted) return ministryNo != null;
+    final r = await showAppSheet<(String, int?, Map<String, dynamic>)>(
+      context,
+      _MinistrySheet(no: ministryNo ?? '', total: ministryTotal, photo: ministryPhoto),
+    );
+    if (r == null || !mounted) return _ministryDone;
     final app = AppScope.read(context);
     final old = r.$1 == ministryNo ? null : await app.db.saleForMinistryInvoice(r.$1);
     if (!mounted) return false;
@@ -71,13 +85,15 @@ class _SaleScreenState extends State<SaleScreen> {
         ),
         yes: 'حسناً',
       );
-      return ministryNo != null;
+      return _ministryDone;
     }
     setState(() {
       ministryNo = r.$1;
       ministryTotal = r.$2;
+      ministryPhoto = r.$3;
     });
     await _save();
+    await app.db.setJson(_photoKey, ministryPhoto);
     return true;
   }
 
@@ -183,7 +199,7 @@ class _SaleScreenState extends State<SaleScreen> {
 
   Future<void> _onProduct(ScanHit? h) async {
     if (h == null || !mounted) return;
-    if (ministryNo == null && !await _askMinistry()) return;
+    if (!_ministryDone && !await _askMinistry()) return;
     if (!mounted) return;
     final p = h.product;
     if (p.isKg) {
@@ -313,7 +329,7 @@ class _SaleScreenState extends State<SaleScreen> {
   }
 
   Future<void> _finish() async {
-    if (ministryNo == null && !await _askMinistry()) return;
+    if (!_ministryDone && !await _askMinistry()) return;
     if (!mounted) return;
     final t = total;
     final n = lines.length;
@@ -354,6 +370,9 @@ class _SaleScreenState extends State<SaleScreen> {
           {'product_id': l.productId, 'mode': l.mode, 'qty': money(l.qty), 'unit_price': money(products[l.productId]!.unitPrice(l.mode))},
       ],
     });
+    // The photo goes up after the sale (the server needs the sale first).
+    final ph = ministryPhoto!;
+    await app.db.enqueue('sale_files', '${ph['id']}', {'sale_id': id, 'file_id': ph['id'], 'content_type': ph['ct'], 'data': ph['data']});
     for (final l in lines) {
       await app.db.adjustStock(l.productId, -products[l.productId]!.toBase(l.qty, l.mode));
     }
@@ -379,7 +398,9 @@ class _SaleScreenState extends State<SaleScreen> {
     lines.clear();
     ministryNo = null;
     ministryTotal = null;
+    ministryPhoto = null;
     await _save();
+    await app.db.set(_photoKey, null);
     await app.recordSaved();
     if (!mounted) return;
     Navigator.of(context).pushReplacement(
@@ -394,7 +415,7 @@ class _SaleScreenState extends State<SaleScreen> {
     return Padding(
       padding: const EdgeInsets.only(bottom: S.xs),
       child: Material(
-        color: ministryNo == null ? cOrange2 : (diff != null && diff != 0 ? cRed2 : cBlue2),
+        color: !_ministryDone ? cOrange2 : (diff != null && diff != 0 ? cRed2 : cBlue2),
         borderRadius: BorderRadius.circular(S.radius),
         child: InkWell(
           key: const Key('ministry'),
@@ -404,7 +425,7 @@ class _SaleScreenState extends State<SaleScreen> {
             padding: const EdgeInsets.symmetric(horizontal: S.m, vertical: S.xs),
             child: Row(
               children: [
-                Icon(Icons.receipt_outlined, size: 20, color: ministryNo == null ? cOrange : cBlue),
+                Icon(Icons.receipt_outlined, size: 20, color: !_ministryDone ? cOrange : cBlue),
                 const SizedBox(width: S.s),
                 Expanded(
                   child: Text(
@@ -412,8 +433,9 @@ class _SaleScreenState extends State<SaleScreen> {
                         ? 'اكتب رقم فاتورة الوزارة'
                         : 'فاتورة الوزارة $ministryNo'
                               '${ministryTotal != null ? ' · ${money(ministryTotal!)}' : ''}'
-                              '${diff != null && diff != 0 ? ' · فرق ${money(diff.abs())}' : ''}',
-                    style: T.label.copyWith(color: diff != null && diff != 0 ? cRed : (ministryNo == null ? cOrange : cBlue)),
+                              '${diff != null && diff != 0 ? ' · فرق ${money(diff.abs())}' : ''}'
+                              '${ministryPhoto == null ? ' · صوّر الفاتورة' : ' · 📷'}',
+                    style: T.label.copyWith(color: diff != null && diff != 0 ? cRed : (!_ministryDone ? cOrange : cBlue)),
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                   ),
@@ -600,7 +622,8 @@ class SaleDoneScreen extends StatelessWidget {
 class _MinistrySheet extends StatefulWidget {
   final String no;
   final int? total;
-  const _MinistrySheet({required this.no, this.total});
+  final Map<String, dynamic>? photo;
+  const _MinistrySheet({required this.no, this.total, this.photo});
   @override
   State<_MinistrySheet> createState() => _MinistrySheetState();
 }
@@ -608,7 +631,18 @@ class _MinistrySheet extends StatefulWidget {
 class _MinistrySheetState extends State<_MinistrySheet> {
   late final noCtl = TextEditingController(text: widget.no);
   late final totalCtl = TextEditingController(text: widget.total == null ? '' : money(widget.total!));
-  String? noError, totalError;
+  String? noError, totalError, photoError;
+  late Map<String, dynamic>? photo = widget.photo;
+
+  Future<void> _photo() async {
+    hideKeyboard();
+    final shot = await takeInvoicePhoto();
+    if (shot == null || !mounted) return;
+    setState(() {
+      photo = {'id': uuid4(), 'ct': shot.$2, 'data': base64Encode(shot.$1)};
+      photoError = null;
+    });
+  }
 
   @override
   void dispose() {
@@ -617,7 +651,7 @@ class _MinistrySheetState extends State<_MinistrySheet> {
     super.dispose();
   }
 
-  void _ok() {
+  Future<void> _ok() async {
     final no = noCtl.text.replaceAll(RegExp(r'\s'), '');
     final raw = totalCtl.text.trim().replaceAll(',', '.');
     // Kuwaiti dinar: at most 3 decimals (fils), read exactly, never rounded.
@@ -627,7 +661,14 @@ class _MinistrySheetState extends State<_MinistrySheet> {
       totalError = raw.isNotEmpty && fils == null ? 'اكتب المبلغ بالدينار، 3 أرقام عشرية بالكتير (مثال 28.296)' : null;
     });
     if (noError != null || totalError != null) return;
-    Navigator.pop(context, (no, raw.isEmpty ? null : fils));
+    // No photo yet: open the camera straight away instead of only complaining.
+    if (photo == null) await _photo();
+    if (!mounted) return;
+    if (photo == null) {
+      setState(() => photoError = 'صوّر فاتورة الوزارة الأصل الأول');
+      return;
+    }
+    Navigator.pop(context, (no, raw.isEmpty ? null : fils, photo!));
   }
 
   @override
@@ -662,6 +703,29 @@ class _MinistrySheetState extends State<_MinistrySheet> {
         },
         decoration: InputDecoration(labelText: 'إجمالي الفاتورة (${W.currency}) — اختياري', errorText: totalError),
       ),
+      const SizedBox(height: S.s),
+      Row(
+        children: [
+          if (photo != null)
+            Padding(
+              padding: const EdgeInsetsDirectional.only(end: S.s),
+              child: ClipRRect(
+                borderRadius: BorderRadius.circular(8),
+                child: Image.memory(base64Decode(photo!['data'] as String), width: 56, height: 56, fit: BoxFit.cover,
+                    gaplessPlayback: true, errorBuilder: (_, _, _) => const Icon(Icons.image, size: 40)),
+              ),
+            ),
+          Expanded(
+            child: OutlinedButton.icon(
+              key: const Key('ministry_photo'),
+              onPressed: _photo,
+              icon: Icon(photo == null ? Icons.photo_camera : Icons.check_circle, color: photo == null ? cOrange : cGreen),
+              label: Text(photo == null ? 'صوّر فاتورة الوزارة الأصل' : 'اتصورت · صوّر تاني', style: T.label),
+            ),
+          ),
+        ],
+      ),
+      if (photoError != null) Text(photoError!, style: T.label.copyWith(color: cRed)),
       const SizedBox(height: S.s),
       BigButton('ابدأ البيع', icon: Icons.play_arrow, onPressed: _ok),
     ],

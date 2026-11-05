@@ -73,11 +73,17 @@ class Api {
 
   /// Photo of a supplier invoice for a voucher made on this device. Returns false while the server does not
   /// know the voucher yet (it was not uploaded yet); throws 'rejected:file' if the server refuses the file.
-  Future<bool> uploadReceiptFile(String receiptClientId, String fileId, List<int> bytes, String contentType) async {
-    final req = http.MultipartRequest('POST', Uri.parse('$baseUrl/api/v1/receipt-file'))
+  Future<bool> uploadReceiptFile(String receiptClientId, String fileId, List<int> bytes, String contentType) =>
+      _upload('receipt-file', {'receipt_client_id': receiptClientId, 'file_id': fileId}, fileId, bytes, contentType);
+
+  /// Photo of the original ministry invoice, after its sale. false = the sale has not reached the server yet.
+  Future<bool> uploadSaleFile(String saleId, String fileId, List<int> bytes, String contentType) =>
+      _upload('sale-file', {'sale_id': saleId, 'file_id': fileId}, fileId, bytes, contentType);
+
+  Future<bool> _upload(String path, Map<String, String> fields, String fileId, List<int> bytes, String contentType) async {
+    final req = http.MultipartRequest('POST', Uri.parse('$baseUrl/api/v1/$path'))
       ..headers.addAll({if (token != null) 'Authorization': 'Bearer $token'})
-      ..fields['receipt_client_id'] = receiptClientId
-      ..fields['file_id'] = fileId
+      ..fields.addAll(fields)
       ..files.add(http.MultipartFile.fromBytes('file', bytes, filename: '$fileId.jpg', contentType: _mediaType(contentType)));
     http.Response r;
     try {

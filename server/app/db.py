@@ -141,7 +141,7 @@ UPGRADES = [
 # Enforced inside PostgreSQL so a bug, a new page or a manual DELETE cannot remove them.
 # Only lines of a voucher that is still "open" (not received yet) may be replaced while editing it.
 PROTECTED_TABLES = ["sales", "sale_lines", "receipts", "count_sessions", "count_lines", "stock_moves",
-                    "receipt_files", "supplier_payments"]
+                    "receipt_files", "sale_files", "supplier_payments"]
 # Every table with business data, and what is logged. Lines are logged when changed or removed; a new line
 # is part of its parent's creation. stock_moves is itself a permanent log, so it is not copied.
 AUDITED_TABLES = {
@@ -151,7 +151,8 @@ AUDITED_TABLES = {
     "products": "INSERT OR UPDATE OR DELETE", "product_barcodes": "INSERT OR UPDATE OR DELETE",
     "suppliers": "INSERT OR UPDATE OR DELETE", "employees": "INSERT OR UPDATE OR DELETE",
     "roles": "INSERT OR UPDATE OR DELETE", "devices": "INSERT OR UPDATE OR DELETE",
-    "receipt_files": "INSERT OR UPDATE OR DELETE", "supplier_payments": "INSERT OR UPDATE OR DELETE",
+    "receipt_files": "INSERT OR UPDATE OR DELETE", "sale_files": "INSERT OR UPDATE OR DELETE",
+    "supplier_payments": "INSERT OR UPDATE OR DELETE",
 }
 # Columns that change all the time on their own (stock has its own log in stock_moves; last_seen is the heartbeat).
 AUDIT_NOISE = ["version", "stock", "last_seen", "updated_at"]

@@ -410,9 +410,9 @@ class LocalDb {
     'created_at': DateTime.now().toIso8601String(),
   }, conflictAlgorithm: ConflictAlgorithm.replace);
 
-  /// Records waiting to go up. Invoice photos ([files]) are sent on their own, after the vouchers.
+  /// Records waiting to go up. Invoice photos ([files]) are sent on their own, after their voucher or sale.
   Future<List<Map<String, Object?>>> pendingOutbox({int limit = 100, bool files = false}) =>
-      db.query('outbox', where: "state = 'pending' AND kind ${files ? '=' : '!='} 'receipt_files'", orderBy: 'created_at', limit: limit);
+      db.query('outbox', where: "state = 'pending' AND kind ${files ? 'IN' : 'NOT IN'} ('receipt_files', 'sale_files')", orderBy: 'created_at', limit: limit);
 
   Future<bool> inOutbox(String key) async => (await db.query('outbox', columns: ['id'], where: 'id = ?', whereArgs: [key])).isNotEmpty;
 

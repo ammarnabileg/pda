@@ -21,7 +21,7 @@ from .exports import Col, Report, Table
 from .db import get_db
 from .models import (
     ADMIN_ROLE, MODES, PERMISSIONS, PIECE_NAMES, UNITS, AuditLog, CountLine, CountSession, Device, Employee, Product, ProductBarcode, Receipt, ReceiptLine,
-    ReceiptFile, Role, Sale, SaleLine, StockMove, Supplier, SupplierPayment, PAYMENT_METHODS, now,
+    ReceiptFile, Role, Sale, SaleFile, SaleLine, StockMove, Supplier, SupplierPayment, PAYMENT_METHODS, now,
 )
 from .security import hash_password, hash_pin, new_pairing_code, verify_password, verify_pin
 
@@ -1239,7 +1239,7 @@ def sales(request: Request, d_from: str = "", d_to: str = "", employee: int = 0,
     if problems:
         items = [s for s in items if flags[s.id]]
     if export_format(request):
-        names = {"duplicate": "مكررة", "total": "الإجمالي مختلف", "missing": "من غير رقم"}
+        names = FLAG_NAMES
         return send_report(request, Report(
             title="المبيعات", filename=f"sales-{f}-{t}",
             subtitle=(f"فاتورة الوزارة {mi}" if mi else f"من {f} إلى {t}") + (" · اللي فيها مشكلة بس" if problems else ""),
@@ -1256,6 +1256,27 @@ def sales(request: Request, d_from: str = "", d_to: str = "", employee: int = 0,
         "problem_count": sum(1 for v in flags.values() if v),
         "total": sum((s.total for s in items), Decimal(0)),
         "employees": db.scalars(select(Employee).order_by(Employee.name)).all()})
+
+
+FLAG_NAMES = {"duplicate": "مكررة", "total": "الإجمالي مختلف", "missing": "من غير رقم", "no_photo": "من غير صورة"}
+
+
+def can_see_ministry_photo(user: Employee) -> bool:
+    """The ministry invoice shows the beneficiary's name and civil ID: admin and accounting only."""
+    return user.is_admin or user.can("accounting")
+
+
+@router.get("/sales/{sid}/files/{fid}")
+def sale_file(sid: str, fid: int, user=Depends(need["sales"]), db: Session = Depends(get_db)):
+    f = db.get(SaleFile, fid)
+    if not f or f.sale_id != sid or not can_see_ministry_photo(user):
+        return redirect(f"/sales/{sid}")
+    path = Path(config.FILES_DIR) / f.filename
+    if not path.is_file():
+        return HTMLResponse("<p dir=rtl>الملف مش موجود على الكمبيوتر. رجّعه من النسخة الاحتياطية.</p>", status_code=404)
+    return Response(path.read_bytes(), media_type=f.content_type,
+                    headers={"Content-Disposition": f'inline; filename="ministry-{fid}{path.suffix}"',
+                             "Cache-Control": "private, no-store"})
 
 
 @router.get("/sales/{sid}", response_class=HTMLResponse)
@@ -1280,6 +1301,7 @@ def sale_detail(sid: str, request: Request, user=Depends(need["sales"]), db: Ses
                           [[i, l.product.name, l.qty, l.product.mode_name(l.mode), l.unit_price, l.total] for i, l in enumerate(s.lines, 1)],
                           totals=["", "الإجمالي", "", "", "", s.total])]))
     return render(request, "sale.html", {"s": s, "same": same, "flags": services.ministry_flags(db, [s])[s.id], "exportable": True,
+                                         "see_photo": can_see_ministry_photo(request.state.user),
                                          **history(db, "sales", s.id, "sale_lines", [l.id for l in s.lines])})
 
 

@@ -213,23 +213,22 @@ class AppState extends ChangeNotifier {
     await _pushFiles();
   }
 
-  /// Invoice photos, one at a time, after the vouchers they belong to.
+  /// Invoice photos (supplier and ministry), one at a time, after the voucher or sale they belong to.
   Future<void> _pushFiles() async {
     for (final r in await db.pendingOutbox(limit: 20, files: true)) {
       final body = jsonDecode(r['payload'] as String) as Map<String, dynamic>;
-      final voucherKey = 'new_receipts:${body['receipt_client_id']}';
-      final voucher = await db.db.query('outbox', where: 'id = ?', whereArgs: [voucherKey]);
-      if (voucher.isNotEmpty && voucher.first['state'] == 'rejected') {
-        await db.rejectOutbox(r['id'] as String, 'receipt_rejected');
+      final forSale = r['kind'] == 'sale_files';
+      final parentKey = forSale ? 'sales:${body['sale_id']}' : 'new_receipts:${body['receipt_client_id']}';
+      final parent = await db.db.query('outbox', where: 'id = ?', whereArgs: [parentKey]);
+      if (parent.isNotEmpty && parent.first['state'] == 'rejected') {
+        await db.rejectOutbox(r['id'] as String, forSale ? 'sale_rejected' : 'receipt_rejected');
         continue;
       }
       try {
-        final done = await api.uploadReceiptFile(
-          body['receipt_client_id'] as String,
-          body['file_id'] as String,
-          base64Decode(body['data'] as String),
-          body['content_type'] as String,
-        );
+        final bytes = base64Decode(body['data'] as String);
+        final done = forSale
+            ? await api.uploadSaleFile(body['sale_id'] as String, body['file_id'] as String, bytes, body['content_type'] as String)
+            : await api.uploadReceiptFile(body['receipt_client_id'] as String, body['file_id'] as String, bytes, body['content_type'] as String);
         if (done) await db.removeOutbox(r['id'] as String);
       } on ApiException catch (e) {
         if (!e.code.startsWith('rejected:')) rethrow;

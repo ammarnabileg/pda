@@ -282,6 +282,7 @@ class Sale(Base):
     lines: Mapped[list["SaleLine"]] = relationship(
         back_populates="sale", cascade="all, delete-orphan", order_by="SaleLine.id"
     )
+    files: Mapped[list["SaleFile"]] = relationship(back_populates="sale", order_by="SaleFile.id")
 
 
 class SaleLine(Base):
@@ -368,6 +369,21 @@ class ReceiptFile(Base):
     device_id: Mapped[int | None] = mapped_column(ForeignKey("devices.id"))
     client_id: Mapped[str | None] = mapped_column(String(60), unique=True)  # retry-safe uploads from devices
     receipt: Mapped[Receipt] = relationship(back_populates="files")
+
+
+class SaleFile(Base):
+    """Photo of the original ministry invoice a sale delivers. It shows the beneficiary's name and civil ID,
+    so only the admin and accounting can open it. The file lives in config.FILES_DIR; it is never deleted."""
+    __tablename__ = "sale_files"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    sale_id: Mapped[str] = mapped_column(ForeignKey("sales.id"), index=True)
+    filename: Mapped[str] = mapped_column(String(120))
+    content_type: Mapped[str] = mapped_column(String(60))
+    size: Mapped[int] = mapped_column(Integer)
+    uploaded_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+    device_id: Mapped[int | None] = mapped_column(ForeignKey("devices.id"))
+    client_id: Mapped[str | None] = mapped_column(String(60), unique=True)
+    sale: Mapped[Sale] = relationship(back_populates="files")
 
 
 PAYMENT_METHODS = {"cash": "نقدي", "cheque": "شيك", "transfer": "تحويل بنكي", "other": "أخرى"}

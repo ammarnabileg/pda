@@ -151,6 +151,8 @@ Future<void> settle(WidgetTester tester, [int ms = 150]) async {
 }
 
 Future<AppState> startApp(WidgetTester tester) async {
+  // The camera is faked: every photo is a small JPEG-looking blob.
+  takeInvoicePhoto = () async => (Uint8List.fromList(List.filled(300, 7)), 'image/jpeg');
   tester.view.physicalSize = const Size(720, 1280);
   tester.view.devicePixelRatio = 2.0; // 360 x 640, a common PDA screen
   addTearDown(tester.view.reset);
@@ -765,7 +767,7 @@ void main() {
   });
 
   testWidgets('ministry invoice: required, compared with its total, never sold twice on one device', (tester) async {
-    await startApp(tester);
+    final app = await startApp(tester);
     await login(tester, 'أحمد', '2222');
     await tester.tap(find.text('بيع'));
     await settle(tester);
@@ -781,8 +783,19 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.textContaining('3 أرقام عشرية بالكتير'), findsOneWidget);
     await tester.enterText(find.byKey(const Key('ministry_total')), '2.000');
+    // The photo of the original ministry invoice is required: the camera opens by itself; backing out of it
+    // keeps the sheet open.
+    takeInvoicePhoto = () async => null;
+    await tester.tap(find.text('ابدأ البيع'));
+    await tester.pumpAndSettle();
+    expect(find.text('صوّر فاتورة الوزارة الأصل الأول'), findsOneWidget);
+    takeInvoicePhoto = () async => (Uint8List.fromList(List.filled(300, 9)), 'image/jpeg');
+    await tester.tap(find.byKey(const Key('ministry_photo')));
+    await tester.pumpAndSettle();
+    expect(find.text('اتصورت · صوّر تاني'), findsOneWidget);
     await tester.tap(find.text('ابدأ البيع'));
     await settle(tester);
+    expect(find.textContaining('📷'), findsOneWidget);
     await scan(tester, '6281000123456'); // 2.450, not the 2.000 on the ministry invoice
     await settle(tester);
     expect(find.textContaining('فرق 0.450'), findsOneWidget);
@@ -792,6 +805,16 @@ void main() {
     await tester.tap(find.text('تم الدفع'));
     await settle(tester, 800);
     expect(find.text('فاتورة الوزارة 555000111'), findsOneWidget);
+    // The photo waits in the outbox for its sale, and goes up on its own.
+    await tester.runAsync(() async {
+      final files = await app.db.pendingOutbox(files: true);
+      expect(files.map((r) => r['kind']), ['sale_files']);
+      final body = jsonDecode(files.single['payload'] as String) as Map<String, dynamic>;
+      final sale = (await app.db.pendingOutbox()).singleWhere((r) => r['kind'] == 'sales');
+      expect('sales:${body['sale_id']}', sale['id']);
+      expect(base64Decode(body['data'] as String), List.filled(300, 9));
+      expect(await app.db.getJson('draft_sale_photo'), isNull, reason: 'the next sale needs its own photo');
+    });
     await noToast(tester);
     // The same ministry invoice again on this device is refused.
     await tester.tap(find.text('فاتورة جديدة'));

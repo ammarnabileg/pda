@@ -81,6 +81,30 @@ async def receipt_file(receipt_client_id: str = Form(...), file_id: str = Form(.
     return {"ok": True, "id": f.id}
 
 
+@router.post("/sale-file")
+async def sale_file(sale_id: str = Form(...), file_id: str = Form(...), file: UploadFile = File(...),
+                    device: Device = Depends(current_device), db: Session = Depends(get_db)):
+    """Photo of the original ministry invoice for a sale made on this device. Sent after the sale;
+    404 means the sale has not arrived yet, so the device keeps the photo and tries again."""
+    from .models import Sale
+
+    try:
+        s = db.get(Sale, sale_id)
+    except Exception:  # not a UUID
+        db.rollback()
+        s = None
+    if s is None or s.device_id != device.id:
+        raise HTTPException(404, "unknown_sale")
+    data = await file.read()
+    try:
+        f = services.save_sale_file(db, s, data, file.content_type or "", device_id=device.id,
+                                    client_id=f"{device.id}:{file_id}"[:60])
+    except services.EditError as e:
+        raise HTTPException(422, str(e))
+    db.commit()
+    return {"ok": True, "id": f.id}
+
+
 @router.post("/products/{pid}/barcodes")
 async def product_barcodes(pid: int, request: Request, device: Device = Depends(current_device), db: Session = Depends(get_db)):
     """The barcodes screen on the device: admin only, online only (applied at once, so devices never disagree)."""

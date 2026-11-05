@@ -20,7 +20,7 @@ const _reasons = {
   'receipt_rejected': ('صورة لسند اترفض', 'مفيش حاجة مطلوبة.'),
   'bad_file': ('صورة الفاتورة مش مقبولة', 'صوّرها تاني وابعتها للمدير.'),
 };
-const _kinds = {'sales': 'بيع', 'counts': 'جرد', 'receipts': 'استلام', 'new_receipts': 'استلام من غير سند', 'receipt_files': 'صورة فاتورة'};
+const _kinds = {'sales': 'بيع', 'counts': 'جرد', 'receipts': 'استلام', 'new_receipts': 'استلام من غير سند', 'receipt_files': 'صورة فاتورة', 'sale_files': 'صورة فاتورة الوزارة'};
 
 class SettingsScreen extends StatefulWidget {
   const SettingsScreen({super.key});

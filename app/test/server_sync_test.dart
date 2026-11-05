@@ -58,6 +58,13 @@ void main() {
           {'product_id': sugar.id, 'mode': 'kg', 'qty': '1.250', 'unit_price': money(sugar.price)},
         ],
       });
+      // The photo of the ministry invoice goes up after its sale.
+      await db.enqueue('sale_files', 'mp-$saleId', {
+        'sale_id': saleId,
+        'file_id': 'mp-$saleId',
+        'content_type': 'image/jpeg',
+        'data': base64Encode([0xff, 0xd8, 0xff, 0xe0, ...List.filled(400, 3)]),
+      });
       // Count and receipt.
       final countId = uuid4();
       await db.enqueue('counts', countId, {

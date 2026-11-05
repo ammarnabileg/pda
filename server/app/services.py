@@ -9,7 +9,7 @@ from sqlalchemy.orm import Session
 
 from .db import next_version
 from .models import (
-    PIECE_NAMES, AuditLog, CountLine, CountSession, Device, Employee, Product, ReceiptFile, SupplierPayment, ProductBarcode, Receipt, ReceiptLine, Sale, SaleLine, Supplier,
+    PIECE_NAMES, AuditLog, CountLine, CountSession, Device, Employee, Product, ReceiptFile, SaleFile, SupplierPayment, ProductBarcode, Receipt, ReceiptLine, Sale, SaleLine, Supplier,
     StockMove, now,
 )
 
@@ -574,31 +574,50 @@ def invoice_taken(db: Session, supplier_id: int, invoice_no: str, except_id: int
 ALLOWED_FILES = {"image/jpeg": ".jpg", "image/png": ".png", "image/webp": ".webp", "application/pdf": ".pdf"}
 
 
-def save_receipt_file(db: Session, r: Receipt, data: bytes, content_type: str, employee_id=None, device_id=None,
-                      client_id=None) -> ReceiptFile:
-    """Store an invoice photo/scan under FILES_DIR/invoices/<voucher id>/. Same client_id twice = one file."""
+def _store_file(folder: str, data: bytes, content_type: str, images_only=False) -> tuple[str, str]:
+    """Writes an uploaded file under FILES_DIR/<folder>/. Returns (path inside FILES_DIR, content type)."""
     import secrets
     from pathlib import Path
 
     from . import config
 
-    if client_id:
-        old = db.scalar(select(ReceiptFile).where(ReceiptFile.client_id == client_id))
-        if old:
-            return old
-    ext = ALLOWED_FILES.get((content_type or "").split(";")[0].strip().lower())
-    if not ext:
-        raise EditError("الملف لازم يكون صورة (JPG أو PNG) أو PDF")
+    ct = (content_type or "").split(";")[0].strip().lower()
+    ext = ALLOWED_FILES.get(ct)
+    if not ext or (images_only and not ct.startswith("image/")):
+        raise EditError("الملف لازم يكون صورة (JPG أو PNG)" if images_only else "الملف لازم يكون صورة (JPG أو PNG) أو PDF")
     if not data:
         raise EditError("الملف فاضي")
     if len(data) > config.MAX_UPLOAD_MB * 1024 * 1024:
         raise EditError(f"الملف أكبر من {config.MAX_UPLOAD_MB} ميجا")
-    rel = f"invoices/{r.id}/{secrets.token_hex(8)}{ext}"
+    rel = f"{folder}/{secrets.token_hex(8)}{ext}"
     path = Path(config.FILES_DIR) / rel
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_bytes(data)
-    f = ReceiptFile(receipt_id=r.id, filename=rel, content_type=content_type.split(";")[0].strip().lower(), size=len(data),
+    return rel, ct
+
+
+def save_receipt_file(db: Session, r: Receipt, data: bytes, content_type: str, employee_id=None, device_id=None,
+                      client_id=None) -> ReceiptFile:
+    """Store an invoice photo/scan under FILES_DIR/invoices/<voucher id>/. Same client_id twice = one file."""
+    if client_id:
+        old = db.scalar(select(ReceiptFile).where(ReceiptFile.client_id == client_id))
+        if old:
+            return old
+    rel, ct = _store_file(f"invoices/{r.id}", data, content_type)
+    f = ReceiptFile(receipt_id=r.id, filename=rel, content_type=ct, size=len(data),
                     uploaded_by=employee_id, device_id=device_id, client_id=client_id)
+    db.add(f)
+    return f
+
+
+def save_sale_file(db: Session, s: Sale, data: bytes, content_type: str, device_id=None, client_id=None) -> SaleFile:
+    """Store the photo of the ministry invoice under FILES_DIR/ministry/<sale id>/. Same client_id twice = one file."""
+    if client_id:
+        old = db.scalar(select(SaleFile).where(SaleFile.client_id == client_id))
+        if old:
+            return old
+    rel, ct = _store_file(f"ministry/{s.id}", data, content_type, images_only=True)
+    f = SaleFile(sale_id=s.id, filename=rel, content_type=ct, size=len(data), device_id=device_id, client_id=client_id)
     db.add(f)
     return f
 
@@ -657,10 +676,13 @@ def supplier_statement(db: Session, supplier, start: date, end: date):
 def ministry_flags(db: Session, sales) -> dict:
     """Per sale id: problems with its ministry invoice. "duplicate" = the same ministry invoice was sold more
     than once (any day, any device); "total" = the total on the ministry invoice differs from the sale;
-    "missing" = no ministry invoice number."""
+    "missing" = no ministry invoice number; "no_photo" = no photo of the ministry invoice (yet: photos arrive
+    a little after the sale, so a sale from the last minutes may show it until the device syncs)."""
     nos = {s.ministry_invoice_no for s in sales if s.ministry_invoice_no}
     counts = dict(db.execute(select(Sale.ministry_invoice_no, func.count()).where(Sale.ministry_invoice_no.in_(nos))
                              .group_by(Sale.ministry_invoice_no)).all()) if nos else {}
+    ids = [s.id for s in sales]
+    with_photo = set(db.scalars(select(SaleFile.sale_id).where(SaleFile.sale_id.in_(ids)))) if ids else set()
     out = {}
     for s in sales:
         f = []
@@ -670,6 +692,8 @@ def ministry_flags(db: Session, sales) -> dict:
             f.append("duplicate")
         if s.ministry_total is not None and s.ministry_total != s.total:
             f.append("total")
+        if s.id not in with_photo:
+            f.append("no_photo")
         out[s.id] = f
     return out
 
