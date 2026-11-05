@@ -575,13 +575,14 @@ class _InvoiceSheetState extends State<_InvoiceSheet> {
   void _ok() {
     final no = noCtl.text.trim();
     final raw = totalCtl.text.trim().replaceAll(',', '.');
-    final total = raw.isEmpty ? null : double.tryParse(raw);
+    // Kuwaiti dinar: at most 3 decimals (fils), read exactly, never rounded.
+    final fils = RegExp(r'^\d+(\.\d{1,3})?$').hasMatch(raw) ? parseMilli(raw) : null;
     setState(() {
       noError = no.isEmpty ? 'رقم فاتورة الشركة مطلوب' : null;
-      totalError = raw.isNotEmpty && (total == null || total < 0) ? 'اكتب رقم صحيح' : null;
+      totalError = raw.isNotEmpty && fils == null ? 'اكتب المبلغ بالدينار، 3 أرقام عشرية بالكتير (مثال 44.100)' : null;
     });
     if (noError != null || totalError != null) return;
-    Navigator.pop(context, (no, total?.toStringAsFixed(3)));
+    Navigator.pop(context, (no, fils == null ? null : money(fils)));
   }
 
   @override

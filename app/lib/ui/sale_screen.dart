@@ -618,13 +618,14 @@ class _MinistrySheetState extends State<_MinistrySheet> {
   void _ok() {
     final no = noCtl.text.replaceAll(RegExp(r'\s'), '');
     final raw = totalCtl.text.trim().replaceAll(',', '.');
-    final t = raw.isEmpty ? null : double.tryParse(raw);
+    // Kuwaiti dinar: at most 3 decimals (fils), read exactly, never rounded.
+    final fils = RegExp(r'^\d+(\.\d{1,3})?$').hasMatch(raw) ? parseMilli(raw) : null;
     setState(() {
       noError = !RegExp(r'^[0-9]{4,30}$').hasMatch(no) ? 'اكتب رقم فاتورة الوزارة (أرقام بس)' : null;
-      totalError = raw.isNotEmpty && (t == null || t < 0) ? 'اكتب رقم صحيح' : null;
+      totalError = raw.isNotEmpty && fils == null ? 'اكتب المبلغ بالدينار، 3 أرقام عشرية بالكتير (مثال 28.296)' : null;
     });
     if (noError != null || totalError != null) return;
-    Navigator.pop(context, (no, t == null ? null : (t * 1000).round()));
+    Navigator.pop(context, (no, raw.isEmpty ? null : fils));
   }
 
   @override

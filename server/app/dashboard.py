@@ -167,6 +167,15 @@ def parse_date(value, default: date) -> date:
         return default
 
 
+FILS = Decimal("0.001")
+KWD_RULE = "الدينار الكويتي 3 أرقام عشرية بس (فلس): مثال 1.250"
+
+
+def fils_ok(v) -> bool:
+    """Kuwaiti dinar amounts have at most 3 decimals (fils). More is refused, never silently rounded."""
+    return v is not None and v == v.quantize(FILS)
+
+
 def dec(value, default=None):
     try:
         v = Decimal(str(value).strip().replace(",", ""))
@@ -351,8 +360,12 @@ def product_errors(db, p_id, f, extra=()):
     price, cost = dec(f.get("price")), dec(f.get("cost") or 0)
     if price is None or price < 0:
         errors["price"] = "سعر البيع لازم يكون رقم، مثال 1.250"
+    elif not fils_ok(price):
+        errors["price"] = f"سعر البيع {price}: {KWD_RULE}"
     if cost is None or cost < 0:
         errors["cost"] = "سعر الشراء لازم يكون رقم، مثال 0.950"
+    elif not fils_ok(cost):
+        errors["cost"] = f"سعر الشراء {cost}: {KWD_RULE}"
     carton = str(f.get("carton") or "0").strip()
     if unit != "kg" and not carton.isdigit():
         errors["carton"] = "عدد الحبات في الكرتون لازم يكون رقم صحيح (أو 0)"
@@ -506,7 +519,8 @@ def _cell(v, key):
     if isinstance(v, float) and v.is_integer() and (key in TEXT_COLUMNS or key == "carton"):
         return str(int(v))
     if isinstance(v, float):
-        return format(Decimal(str(v)).normalize(), "f")
+        d = Decimal(repr(v)).quantize(Decimal("0.000001"))   # 2.4499999999 from a formula -> 2.450000
+        return format(d.normalize(), "f")
     return str(v).strip()
 
 
@@ -884,6 +898,9 @@ async def supplier_payment(sid: int, request: Request, user=Depends(admin_only),
     if amount is None or amount == 0 or paid_on is None or method not in PAYMENT_METHODS:
         flash(request, "اكتب المبلغ والتاريخ وطريقة الدفع", "error")
         return redirect(back)
+    if not fils_ok(amount):
+        flash(request, f"المبلغ {amount}: {KWD_RULE}", "error")
+        return redirect(back)
     if amount < 0 and not note:
         flash(request, "المبلغ بالسالب معناه تصحيح دفعة غلط: اكتب السبب في الملاحظة", "error")
         return redirect(back)
@@ -1031,6 +1048,9 @@ def invoice_fields(db, f, sup, r):
         total = dec(raw)
         if total is None or total < 0:
             errors.append("إجمالي الفاتورة لازم يكون رقم")
+            total = None
+        elif not fils_ok(total):
+            errors.append(f"إجمالي الفاتورة {total}: {KWD_RULE}")
             total = None
     return no or None, total, errors
 
@@ -1551,6 +1571,8 @@ def _num(f, name):
     v = dec(f.get(name))
     if v is None:
         raise services.EditError("فيه خانة فاضية أو رقم غلط")
+    if not fils_ok(v):  # prices in fils, quantities in grams: both 3 decimals at most
+        raise services.EditError(f"الرقم {v} فيه أكتر من 3 أرقام عشرية. {KWD_RULE}")
     return v
 
 

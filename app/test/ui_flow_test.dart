@@ -750,6 +750,11 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('اكتب رقم فاتورة الوزارة (أرقام بس)'), findsOneWidget);
     await tester.enterText(find.byKey(const Key('ministry_no')), '555000111');
+    // More than 3 decimals is not a dinar amount: refused, not rounded.
+    await tester.enterText(find.byKey(const Key('ministry_total')), '2.0005');
+    await tester.tap(find.text('ابدأ البيع'));
+    await tester.pumpAndSettle();
+    expect(find.textContaining('3 أرقام عشرية بالكتير'), findsOneWidget);
     await tester.enterText(find.byKey(const Key('ministry_total')), '2.000');
     await tester.tap(find.text('ابدأ البيع'));
     await settle(tester);

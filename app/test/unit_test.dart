@@ -74,4 +74,12 @@ void main() {
     expect(old.can('count'), isTrue);
     expect(old.can('sale'), isFalse);
   });
+
+  test('Kuwaiti dinar: fils exact, line totals round half up like the server', () {
+    expect(money(28296), '28.296');
+    expect(parseMilli('28.296'), 28296);
+    expect(lineTotal(350, 1250), 438, reason: '0.350 x 1.250 kg = 0.4375 -> 0.438');
+    expect(lineTotal(68, 24000), 1632);
+    expect(money(-5), '-0.005');
+  });
 }
