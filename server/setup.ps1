@@ -2,7 +2,7 @@
 # Run it with setup.bat (asks for administrator rights). Safe to run again: each step
 # checks what exists and skips it. Any failed step stops the setup with the reason.
 #
-#   1. Python 3.11+ and PostgreSQL 16 (winget if missing)
+#   1. Python 3.11+ and PostgreSQL 16 if missing (winget, or the official installer downloaded directly)
 #   2. A dedicated database user "tamween_app" that owns only the "tamween" database
 #   3. server\.env and server\.secrets (both readable only by admins, SYSTEM and you)
 #   4. Python packages and tables
@@ -55,18 +55,42 @@ function Refresh-Path {
     $env:Path = [Environment]::GetEnvironmentVariable("Path", "Machine") + ";" + [Environment]::GetEnvironmentVariable("Path", "User")
 }
 
-function Need-Winget {
-    if (-not (Get-Command winget.exe -ErrorAction SilentlyContinue)) {
-        throw "winget is not available. Install 'App Installer' from the Microsoft Store (or install Python 3.12 / PostgreSQL 16 by hand) and run setup again."
-    }
-}
+function Has-Winget { [bool](Get-Command winget.exe -ErrorAction SilentlyContinue) }
 
 function Winget-Install([string]$Id, [string[]]$Extra) {
-    Need-Winget
     $ErrorActionPreference = "Continue"
     & winget install --id $Id -e --silent --accept-package-agreements --accept-source-agreements @Extra
     # 0 = installed; -1978335189 (0x8A15002B) = already installed / no newer version.
     if ($LASTEXITCODE -ne 0 -and $LASTEXITCODE -ne -1978335189) { throw "winget could not install $Id (exit $LASTEXITCODE)." }
+}
+
+# Without winget (Windows Server, or Windows without the Store): the official installer, downloaded directly.
+# The first URL that exists is used (newest first), and it only runs if Windows says it is signed by $Signer.
+function Download-Installer([string[]]$Urls, [string]$Name, [string]$Signer, [long]$MinBytes) {
+    [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
+    $ProgressPreference = "SilentlyContinue"   # the progress bar makes downloads many times slower in PowerShell 5.1
+    $out = Join-Path $env:TEMP $Name
+    foreach ($u in $Urls) {
+        try { Invoke-WebRequest -Uri $u -Method Head -UseBasicParsing -TimeoutSec 30 | Out-Null } catch { continue }
+        Write-Host "   downloading $u ..."
+        try { Invoke-WebRequest -Uri $u -OutFile $out -UseBasicParsing -TimeoutSec 3600 }
+        catch { throw "Download of $u failed: $($_.Exception.Message). Check the internet connection and run setup again." }
+        if ((Get-Item $out).Length -lt $MinBytes) { Remove-Item $out -Force; throw "Download of $u is incomplete. Run setup again." }
+        $sig = Get-AuthenticodeSignature $out
+        if ($sig.Status -ne "Valid" -or $sig.SignerCertificate.Subject -notlike "*$Signer*") {
+            Remove-Item $out -Force
+            throw "The downloaded installer is not signed by $Signer ($($sig.Status)). It was deleted and not run."
+        }
+        Ok "downloaded and signature checked ($Signer)"
+        return $out
+    }
+    throw "Could not download $Name (no internet, or the site is blocked). Install it by hand and run setup again."
+}
+
+function Run-Installer([string]$Exe, [string]$ArgLine, [string]$What) {
+    $p = Start-Process -FilePath $Exe -ArgumentList $ArgLine -Wait -PassThru
+    if ($p.ExitCode -ne 0) { throw "$What installer failed (exit $($p.ExitCode))." }
+    Remove-Item $Exe -Force -ErrorAction SilentlyContinue
 }
 
 # ---------------------------------------------------------------- Python
@@ -92,7 +116,13 @@ Step "Python"
 $Python = Find-Python
 if (-not $Python) {
     Write-Host "   installing Python 3.12 ..."
-    Winget-Install "Python.Python.3.12" @("--scope", "machine")
+    if (Has-Winget) { Winget-Install "Python.Python.3.12" @("--scope", "machine") }
+    else {
+        $urls = "3.12.12", "3.12.11", "3.12.10", "3.12.9" | ForEach-Object { "https://www.python.org/ftp/python/$_/python-$_-amd64.exe" }
+        $exe = Download-Installer $urls "python-3.12-amd64.exe" "Python Software Foundation" 15MB
+        Run-Installer $exe "/quiet InstallAllUsers=1 PrependPath=1 Include_test=0" "Python"
+        Refresh-Path
+    }
     $Python = Find-Python
     if (-not $Python) { throw "Python 3.12 was installed but cannot be found. Restart the PC and run setup again." }
 }
@@ -133,7 +163,14 @@ if (-not $Pg) {
     $SuperPw = New-Password
     Set-Content $SuperFile "postgres`n$SuperPw" -Encoding ASCII -NoNewline
     Write-Host "   installing PostgreSQL 16 (a few minutes) ..."
-    Winget-Install "PostgreSQL.PostgreSQL.16" @("--override", "--mode unattended --unattendedmodeui none --superpassword $SuperPw --serverport 5432 --disable-components stackbuilder")
+    $PgArgs = "--mode unattended --unattendedmodeui none --superpassword $SuperPw --serverport 5432 --disable-components stackbuilder"
+    if (Has-Winget) { Winget-Install "PostgreSQL.PostgreSQL.16" @("--override", $PgArgs) }
+    else {
+        Write-Host "   winget is not on this PC: downloading the official installer from EnterpriseDB (about 350 MB) ..."
+        $urls = 17..4 | ForEach-Object { "https://get.enterprisedb.com/postgresql/postgresql-16.$_-1-windows-x64.exe" }
+        $exe = Download-Installer $urls "postgresql-16-windows-x64.exe" "EnterpriseDB" 100MB
+        Run-Installer $exe $PgArgs "PostgreSQL"
+    }
     $Pg = Find-Postgres
     if (-not $Pg) { throw "PostgreSQL was installed but is not registered. Restart the PC and run setup again." }
 }
