@@ -127,6 +127,8 @@ class Product(Base):
     __tablename__ = "products"
     id: Mapped[int] = mapped_column(primary_key=True)
     barcode: Mapped[str] = mapped_column(String(40), unique=True)
+    # The product's own number (رقم الصنف), as in the old system and the supplier's list. Unique when set.
+    code: Mapped[str | None] = mapped_column(String(20), unique=True)
     name: Mapped[str] = mapped_column(String(200))
     unit: Mapped[str] = mapped_column(String(10), default="piece")
     price: Mapped[Decimal] = mapped_column(Money, default=0)

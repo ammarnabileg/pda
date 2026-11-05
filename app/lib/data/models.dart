@@ -11,6 +11,7 @@ class Product {
   final int stock; // thousandths of the base unit
   final bool active;
   final String pieceName; // what one piece is called: حبة, علبة, كيس ... (set in the dashboard)
+  final String? code; // product number (رقم الصنف), can be typed instead of a barcode
 
   const Product({
     required this.id,
@@ -23,6 +24,7 @@ class Product {
     required this.stock,
     required this.active,
     this.pieceName = 'حبة',
+    this.code,
   });
 
   /// كرتون / كجم / this product's piece name.
@@ -59,6 +61,7 @@ class Product {
     'stock': stock,
     'active': active ? 1 : 0,
     'piece_name': pieceName,
+    'code': code,
   };
 
   factory Product.fromRow(Map<String, Object?> r) => Product(
@@ -72,6 +75,7 @@ class Product {
     stock: r['stock'] as int,
     active: (r['active'] as int) == 1,
     pieceName: (r['piece_name'] as String?) ?? 'حبة',
+    code: r['code'] as String?,
   );
 
   factory Product.fromApi(Map<String, dynamic> j) => Product(
@@ -85,6 +89,7 @@ class Product {
     stock: parseMilli(j['stock'].toString()) ?? 0,
     active: j['active'] as bool,
     pieceName: (j['piece_name'] as String?) ?? 'حبة',
+    code: j['code'] as String?,
   );
 }
 

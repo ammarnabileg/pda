@@ -286,7 +286,8 @@ def products(request: Request, q: str = "", status: str = "active", low: int = 0
     if q.strip():
         like = f"%{q.strip()}%"
         extra = select(ProductBarcode.product_id).where(ProductBarcode.code.ilike(like))
-        stmt = stmt.where(or_(Product.name.ilike(like), Product.barcode.ilike(like), Product.id.in_(extra)))
+        stmt = stmt.where(or_(Product.name.ilike(like), Product.barcode.ilike(like), Product.code.ilike(like),
+                              func.ltrim(Product.code, "0") == q.strip().lstrip("0"), Product.id.in_(extra)))
     if low:
         stmt = stmt.where(Product.stock <= Product.min_stock, Product.min_stock > 0)
     if unit in UNITS:
@@ -297,11 +298,11 @@ def products(request: Request, q: str = "", status: str = "active", low: int = 0
                                      {"active": "الفعّال", "inactive": "الموقوف"}.get(status, "الكل")] if x)
         return send_report(request, Report(
             title="الأصناف", filename=f"products-{datetime.now(TZ):%Y%m%d}", subtitle=f"{len(rows)} صنف · {filt}",
-            tables=[Table([Col("م", "int", .4), Col("الصنف", "text", 3), Col("الباركود", "text", 1.6),
+            tables=[Table([Col("م", "int", .4), Col("رقم الصنف", "text", .9), Col("الصنف", "text", 3), Col("الباركود", "text", 1.6),
                            Col("باركودات تانية", "text", 1.6), Col("الوحدة", "text", .8), Col("حبات الكرتون", "int", .7),
                            Col("سعر البيع", "money"), Col("سعر الشراء", "money"), Col("الرصيد", "qty"),
                            Col("حد الطلب", "qty", .8), Col("الحالة", "text", .7)],
-                          [[i, p.name, p.barcode, " ".join(b.code for b in p.extra_barcodes), p.unit_name,
+                          [[i, p.code or "", p.name, p.barcode, " ".join(b.code for b in p.extra_barcodes), p.unit_name,
                             p.carton or "", p.price, p.cost, p.stock, p.min_stock, "فعّال" if p.active else "موقوف"]
                            for i, p in enumerate(rows, 1)])]))
     total = db.scalar(select(func.count()).select_from(stmt.subquery()))
@@ -338,6 +339,12 @@ def product_errors(db, p_id, f, extra=()):
             errors["barcode"] = f"الباركود ده مستخدم للصنف: {other}"
     if not name:
         errors["name"] = "اسم الصنف مطلوب"
+    code = str(f.get("code") or "").strip()
+    if code:
+        if not code.isalnum() or len(code) > 20:
+            errors["code"] = "رقم الصنف: أرقام أو حروف بدون مسافات، لحد 20"
+        elif db.scalar(select(Product.name).where(Product.code == code, Product.id != (p_id or 0))):
+            errors["code"] = f"رقم الصنف ده مستخدم للصنف: {db.scalar(select(Product.name).where(Product.code == code))}"
     unit = f.get("unit")
     if unit not in UNITS:
         errors["unit"] = "اختار الوحدة"
@@ -371,6 +378,8 @@ def product_errors(db, p_id, f, extra=()):
 
 def apply_product_form(db, p: Product, f, extra):
     p.barcode = str(f.get("barcode")).strip()
+    if "code" in f:  # an import file without the column keeps the number the product has
+        p.code = str(f.get("code") or "").strip() or None
     p.name = str(f.get("name")).strip()
     p.unit = f.get("unit")
     pn = str(f.get("piece_name") or "").strip()
@@ -434,7 +443,7 @@ def product_detail(pid: int, request: Request, user=Depends(need["products"]), d
         reasons = {"sale": "بيع", "receipt": "استلام", "count": "جرد", "manual": "يدوي", "edit": "تعديل محاسبة"}
         return send_report(request, Report(
             title=f"كارت صنف: {p.name}", filename=f"product-{p.id}",
-            info=[("الباركود", p.barcode), ("الوحدة", p.unit_name), ("سعر البيع", fmt_money(p.price)),
+            info=[("رقم الصنف", p.code or "—"), ("الباركود", p.barcode), ("الوحدة", p.unit_name), ("سعر البيع", fmt_money(p.price)),
                   ("سعر الشراء", fmt_money(p.cost)), ("الرصيد", base_text(p, p.stock)), ("حد الطلب", fmt_qty(p.min_stock, p.unit)),
                   ("حبات الكرتون", p.carton or "—"), ("باركودات تانية", " ".join(b.code for b in p.extra_barcodes) or "—")],
             tables=[Table([Col("م", "int", .4), Col("الوقت", "text", 1.3), Col("سعر البيع قبل", "money"), Col("سعر البيع بعد", "money"),
@@ -469,17 +478,17 @@ async def product_update(pid: int, request: Request, user=Depends(need["products
 
 
 # No stock column: stock only changes through sales, vouchers, approved counts and corrections with a reason.
-IMPORT_COLUMNS = ["barcode", "name", "unit", "price", "cost", "carton", "min_stock", "carton_barcode", "extra_barcodes"]
+IMPORT_COLUMNS = ["code", "barcode", "name", "unit", "price", "cost", "carton", "min_stock", "carton_barcode", "extra_barcodes"]
 # Column titles in the Excel template; files may use these or the English keys.
-IMPORT_TITLES = {"barcode": "الباركود", "name": "اسم الصنف", "unit": "الوحدة", "price": "سعر البيع", "cost": "سعر الشراء",
+IMPORT_TITLES = {"code": "رقم الصنف", "barcode": "الباركود", "name": "اسم الصنف", "unit": "الوحدة", "price": "سعر البيع", "cost": "سعر الشراء",
                  "carton": "حبات الكرتون", "min_stock": "حد الطلب", "carton_barcode": "باركود الكرتون",
                  "extra_barcodes": "باركودات تانية"}
 IMPORT_ALIASES = {**{k: k for k in IMPORT_COLUMNS}, **{v: k for k, v in IMPORT_TITLES.items()},
-                  "الصنف": "name", "الاسم": "name", "نوع البيع": "unit", "عدد الحبات في الكرتون": "carton",
+                  "الصنف": "name", "الاسم": "name", "كود الصنف": "code", "كود الصنف القديم": "code", "رقم صنف": "code", "نوع البيع": "unit", "عدد الحبات في الكرتون": "carton",
                   "الباركود الأساسي": "barcode", "باركودات إضافية": "extra_barcodes"}
 UNIT_ALIASES = {"piece": "piece", "حبة": "piece", "بالحبة": "piece", "حبه": "piece", "kg": "kg", "كيلو": "kg",
                 "بالكيلو": "kg", "كجم": "kg", "كيلوجرام": "kg", **{n: "piece" for n in PIECE_NAMES}, "علبه": "piece"}
-TEXT_COLUMNS = ("barcode", "carton_barcode", "extra_barcodes")
+TEXT_COLUMNS = ("code", "barcode", "carton_barcode", "extra_barcodes")
 
 
 def _cell(v, key):
@@ -557,12 +566,12 @@ def import_template_xlsx(products=None) -> bytes:
                         showErrorMessage=True, errorTitle="الوحدة", error="اختار من القائمة")
     ws.add_data_validation(dv)
     dv.add(f"{unit_col}2:{unit_col}5001")
-    rows = ([[p.barcode, p.name, p.unit_name, float(p.price), float(p.cost), p.carton,
+    rows = ([[p.code or "", p.barcode, p.name, p.unit_name, float(p.price), float(p.cost), p.carton,
               float(p.min_stock), " ".join(b.code for b in p.extra_barcodes if b.mode == "carton"),
               " ".join(b.code for b in p.extra_barcodes if b.mode != "carton")] for p in products]
             if products is not None else
-            [["6281000123456", "أرز بسمتي ٥ كجم", "حبة", 2.45, 2.05, 6, 10, "16281000123453", "6281000123999"],
-             ["2100000012345", "سكر أبيض", "كيلو", 0.35, 0.28, 0, 20, "", ""]])
+            [["00010001", "6281000123456", "أرز بسمتي ٥ كجم", "حبة", 2.45, 2.05, 6, 10, "16281000123453", "6281000123999"],
+             ["00010002", "2100000012345", "سكر أبيض", "كيلو", 0.35, 0.28, 0, 20, "", ""]])
     for r, row in enumerate(rows, start=2):
         for i, v in enumerate(row, start=1):
             c = ws.cell(row=r, column=i, value=v)
@@ -575,6 +584,7 @@ def import_template_xlsx(products=None) -> bytes:
     for i, line in enumerate([
         "طريقة الاستيراد",
         "1. املأ ورقة «الأصناف»: كل صنف في سطر، وأول سطر هو أسماء الأعمدة (ماتغيّرهوش).",
+        "رقم الصنف: رقم الصنف عندكم (زي 00010001)، مايتكررش. لو موجود، الاستيراد بيلاقي الصنف بيه حتى لو الباركود اتغيّر.",
         "2. الباركود: لازم يتكتب كنص (العمود متظبط كده). لو لزقت أرقام من مكان تاني، اتأكد إنها مااتحوّلتش لـ 6.28E+12.",
         "3. الوحدة: «حبة» أو «كيلو» من القائمة.",
         "4. حبات الكرتون: عدد الحبات في الكرتون، أو 0 لو مالوش كرتون.",
@@ -641,7 +651,9 @@ async def import_products(request: Request, user=Depends(need["products"]), db: 
             row.setdefault(k, "0" if k != "price" else "")
             row[k] = row[k] or ("0" if k != "price" else "")
         row["active"] = "1"
-        existing = db.scalar(select(Product).where(Product.barcode == row.get("barcode", "")))
+        # Same product number first (the barcode may have changed), then the same main barcode.
+        existing = (db.scalar(select(Product).where(Product.code == row["code"])) if row.get("code") else None) \
+            or db.scalar(select(Product).where(Product.barcode == row.get("barcode", "")))
         extra = [(c, "carton") for c in row.get("carton_barcode", "").replace("|", " ").split() if c]
         extra += [(c.strip(), "kg" if row["unit"] == "kg" else "piece") for c in row.get("extra_barcodes", "").replace("|", " ").split() if c.strip()]
         if existing:  # keep barcodes the file does not mention
@@ -672,7 +684,7 @@ def barcode_row(p: Product) -> dict:
     main_mode = "kg" if p.unit == "kg" else "piece"
     codes = [{"code": p.barcode, "mode": main_mode, "name": p.mode_name(main_mode), "main": True}]
     codes += [{"code": b.code, "mode": b.mode, "name": p.mode_name(b.mode), "main": False} for b in p.extra_barcodes]
-    return {"id": p.id, "name": p.name, "unit": p.unit, "piece_name": p.piece_name or "حبة", "carton": p.carton,
+    return {"id": p.id, "code": p.code or "", "name": p.name, "unit": p.unit, "piece_name": p.piece_name or "حبة", "carton": p.carton,
             "unit_name": p.unit_name, "codes": codes,
             "missing_carton": bool(p.carton) and not any(c["mode"] == "carton" for c in codes)}
 
@@ -689,9 +701,9 @@ def barcodes(request: Request, q: str = "", show: str = "active", user=Depends(n
     if export_format(request):
         return send_report(request, Report(
             title="باركودات الأصناف", filename=f"barcodes-{datetime.now(TZ):%Y%m%d}",
-            tables=[Table([Col("م", "int", .4), Col("الصنف", "text", 2.6), Col("الوحدة", "text", .7), Col("حبات الكرتون", "int", .7),
-                           Col("الباركودات", "text", 3.5)],
-                          [[i, r["name"], r["unit_name"], r["carton"] or "",
+            tables=[Table([Col("م", "int", .4), Col("رقم الصنف", "text", .9), Col("الصنف", "text", 2.6), Col("الوحدة", "text", .7),
+                           Col("حبات الكرتون", "int", .7), Col("الباركودات", "text", 3.5)],
+                          [[i, r["code"], r["name"], r["unit_name"], r["carton"] or "",
                             "  ".join(f"{c['code']} ({c['name']}{'، أساسي' if c['main'] else ''})" for c in r["codes"])]
                            for i, r in enumerate(rows, 1)])]))
     return render(request, "barcodes.html", {"rows": rows, "q": q, "show": show, "exportable": True,

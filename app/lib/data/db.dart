@@ -17,7 +17,7 @@ class LocalDb {
     final file = path ?? p.join(await f.getDatabasesPath(), 'tamween.db');
     final db = await f.openDatabase(
       file,
-      options: OpenDatabaseOptions(version: 7, onCreate: _create, onUpgrade: _upgrade),
+      options: OpenDatabaseOptions(version: 8, onCreate: _create, onUpgrade: _upgrade),
     );
     return LocalDb(db);
   }
@@ -39,6 +39,12 @@ class LocalDb {
         if (!cols.contains('permissions')) await db.execute('ALTER TABLE employees ADD COLUMN permissions TEXT');
       }
       // Permissions only arrive with a full download; until then the old fixed roles apply.
+      await db.insert('kv', {'key': 'version', 'value': '0'}, conflictAlgorithm: ConflictAlgorithm.replace);
+    }
+    if (from < 8) {
+      final cols = (await db.rawQuery('PRAGMA table_info(products)')).map((c) => c['name']).toSet();
+      if (cols.isNotEmpty && !cols.contains('code')) await db.execute('ALTER TABLE products ADD COLUMN code TEXT');
+      // Product numbers only arrive with a full download.
       await db.insert('kv', {'key': 'version', 'value': '0'}, conflictAlgorithm: ConflictAlgorithm.replace);
     }
     if (from < 7) {
@@ -78,7 +84,7 @@ class LocalDb {
   static Future<void> _create(Database db, int version) async {
     await db.execute('''CREATE TABLE products(id INTEGER PRIMARY KEY, barcode TEXT NOT NULL, name TEXT NOT NULL,
       unit TEXT NOT NULL, price INTEGER NOT NULL, cost INTEGER NOT NULL DEFAULT 0, carton INTEGER NOT NULL, stock INTEGER NOT NULL, active INTEGER NOT NULL,
-      piece_name TEXT NOT NULL DEFAULT 'حبة')''');
+      piece_name TEXT NOT NULL DEFAULT 'حبة', code TEXT)''');
     await db.execute('CREATE INDEX products_barcode ON products(barcode)');
     await _createBarcodes(db);
     await _createHistory(db);
@@ -148,8 +154,17 @@ class LocalDb {
       'WHERE p.active = 1 AND b.code IN (${List.filled(variants.length, '?').join(',')})',
       variants,
     );
-    if (r.isEmpty) return null;
-    return ScanHit(Product.fromRow(r.first), r.first['scan_mode'] as String);
+    if (r.isNotEmpty) return ScanHit(Product.fromRow(r.first), r.first['scan_mode'] as String);
+    // A typed product number (رقم الصنف), with or without the leading zeros: 10005 finds 00010005.
+    final digits = code.replaceFirst(RegExp(r'^0+'), '');
+    if (digits.isEmpty) return null;
+    final byCode = await db.rawQuery(
+      "SELECT * FROM products WHERE active = 1 AND code IS NOT NULL AND (code = ? OR ltrim(code, '0') = ?) LIMIT 1",
+      [code, digits],
+    );
+    if (byCode.isEmpty) return null;
+    final hit = Product.fromRow(byCode.first);
+    return ScanHit(hit, hit.isKg ? 'kg' : 'piece');
   }
 
   Future<List<String>> barcodesOf(int productId) async {

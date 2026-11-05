@@ -54,6 +54,7 @@ Future<LocalDb> seededDb() async {
         'id': 4,
         'barcode': '6281000444444',
         'name': 'حليب بودرة',
+        'code': '00010005',
         'unit': 'piece',
         'piece_name': 'علبة',
         'price': '1.050',
@@ -785,6 +786,11 @@ void main() {
     await noToast(tester);
     expect(find.widgetWithText(QtyStepper, '2 علبة'), findsOneWidget);
     expect(find.textContaining('حبة'), findsNothing);
+    // Typing the product number (without its leading zeros) finds the product too.
+    await scan(tester, '10005');
+    await settle(tester);
+    await noToast(tester);
+    expect(find.widgetWithText(QtyStepper, '3 علبة'), findsOneWidget);
     await tester.pump(const Duration(seconds: 30));
   });
 

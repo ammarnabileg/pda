@@ -91,6 +91,7 @@ class _PriceScreenState extends State<PriceScreen> {
                   if (seeCost) _kv('سعر الشراء', '${money(p!.cost)} ${W.currency} / $unit'),
                   if (seeCost && p!.carton > 0) _kv('شراء الكرتون', '${money(p!.cost * p!.carton)} ${W.currency}'),
                   _kv('الرصيد على الجهاز', p!.baseText(p!.stock)),
+                  if (p!.code != null) _kv('رقم الصنف', p!.code!),
                   _kv('الباركود', p!.barcode),
                   const SizedBox(height: S.xs),
                   Text(syncedAgo(app.lastSync), textAlign: TextAlign.center, style: T.sub),

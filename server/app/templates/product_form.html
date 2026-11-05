@@ -10,6 +10,7 @@
   <fieldset>
     <legend>١. بيانات الصنف</legend>
     <div class="grid">
+      <div class="{{ fcls('code') }}"><label for="code">رقم الصنف</label><input id="code" name="code" value="{{ v('code') if (form or (p and p.code)) else '' }}" dir="ltr" maxlength="20" placeholder="مثال 00010001">{{ err('code') }}<div class="hint">رقم الصنف عندكم. مايتكررش، وتقدر تدوّر بيه أو تكتبه على الجهاز بدل الباركود</div></div>
       <div class="{{ fcls('name') }}" style="grid-column:1/-1"><label for="name">اسم الصنف</label><input id="name" name="name" value="{{ v('name') }}" required {{ 'autofocus' if not p }}>{{ err('name') }}
         <div class="hint">اكتب الحجم أو العبوة في الاسم لو فيه أصناف شبه بعض، مثال: أرز بسمتي ٥ كجم</div></div>
     </div>

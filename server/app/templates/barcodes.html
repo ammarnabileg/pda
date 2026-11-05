@@ -8,10 +8,11 @@
   {% if user.is_admin %}<label class="check" style="align-self:end"><input type="checkbox" id="next" checked> بعد الحفظ روح للصنف اللي بعده</label>{% endif %}
 </div>
 <div id="msg" class="alert" role="status" aria-live="polite" hidden></div>
-<div class="table-wrap" style="max-height:none"><table id="bc"><thead><tr><th class="num">م</th><th>الصنف</th><th>الوحدة</th><th>الباركودات</th>{% if user.is_admin %}<th class="no-print">إضافة باركود</th>{% endif %}</tr></thead>
+<div class="table-wrap" style="max-height:none"><table id="bc"><thead><tr><th class="num">م</th><th>رقم الصنف</th><th>الصنف</th><th>الوحدة</th><th>الباركودات</th>{% if user.is_admin %}<th class="no-print">إضافة باركود</th>{% endif %}</tr></thead>
 <tbody>
-{% for r in rows %}<tr data-id="{{ r.id }}" data-unit="{{ r.unit }}" data-search="{{ r.name }} {% for c in r.codes %}{{ c.code }} {% endfor %}">
+{% for r in rows %}<tr data-id="{{ r.id }}" data-unit="{{ r.unit }}" data-search="{{ r.code }} {{ r.name }} {% for c in r.codes %}{{ c.code }} {% endfor %}">
   <td class="num">{{ loop.index }}</td>
+  <td dir="ltr" style="text-align:right">{{ r.code or '—' }}</td>
   <td><a href="/products/{{ r.id }}">{{ r.name }}</a>{% if r.missing_carton %} <span class="pill p-warn">ناقص باركود كرتون</span>{% endif %}</td>
   <td class="unit-cell">{% if r.unit == 'kg' %}<span class="pill p-gray">كيلو</span>{% elif user.is_admin %}
     <select class="pn" aria-label="اسم الوحدة لـ {{ r.name }}">{% for n in PIECE_NAMES %}<option {{ 'selected' if n == r.piece_name }}>{{ n }}</option>{% endfor %}</select>
@@ -20,7 +21,7 @@
   <td class="codes">{% for c in r.codes %}<span class="code {{ 'main' if c.main }}" data-code="{{ c.code }}"><b dir="ltr">{{ c.code }}</b> {{ c.name }}{% if c.main %} · أساسي{% endif %}{% if user.is_admin %}<button type="button" class="x" title="شيل الباركود ده" aria-label="شيل {{ c.code }}">×</button>{% endif %}</span>{% endfor %}</td>
   {% if user.is_admin %}<td class="add no-print"><input class="code-in" placeholder="امسح هنا" dir="ltr" autocomplete="off" aria-label="باركود جديد لـ {{ r.name }}">
     <select class="mode" aria-label="نوع الباركود">{% if r.unit == 'kg' %}<option value="kg">كيلو</option>{% else %}<option value="piece">{{ r.piece_name }}</option><option value="carton" {{ 'disabled' if not r.carton }}>كرتون</option>{% endif %}</select></td>{% endif %}
-</tr>{% else %}<tr><td colspan="5" class="muted">مفيش أصناف</td></tr>{% endfor %}
+</tr>{% else %}<tr><td colspan="6" class="muted">مفيش أصناف</td></tr>{% endfor %}
 </tbody></table></div>
 {% if user.is_admin %}
 <script>
@@ -30,7 +31,7 @@ function say(text, ok) { msg.hidden = false; msg.textContent = text; msg.classNa
 function esc(s) { return String(s).replace(/[&<>"]/g, c => ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;'}[c])) }
 function paint(tr, row) {
   tr.querySelector('.codes').innerHTML = row.codes.map(c => `<span class="code ${c.main ? 'main' : ''}" data-code="${esc(c.code)}"><b dir="ltr">${esc(c.code)}</b> ${esc(c.name)}${c.main ? ' · أساسي' : ''}<button type="button" class="x" title="شيل الباركود ده">×</button></span>`).join('')
-  tr.dataset.search = row.name + ' ' + row.codes.map(c => c.code).join(' ')
+  tr.dataset.search = row.code + ' ' + row.name + ' ' + row.codes.map(c => c.code).join(' ')
   const sel = tr.querySelector('.mode')
   if (sel && row.unit !== 'kg') {
     sel.options[0].textContent = row.piece_name

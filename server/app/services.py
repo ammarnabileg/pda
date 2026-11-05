@@ -54,7 +54,11 @@ def find_by_code(db: Session, code: str):
     if p:
         return p, ("kg" if p.unit == "kg" else "piece")
     b = db.scalar(select(ProductBarcode).where(ProductBarcode.code == code))
-    return (b.product, b.mode) if b else (None, None)
+    if b:
+        return b.product, b.mode
+    # Typed product number (رقم الصنف), with or without the leading zeros.
+    p = db.scalar(select(Product).where(or_(Product.code == code, func.ltrim(Product.code, "0") == code.lstrip("0"))).limit(1)) if code.strip("0") else None
+    return (p, "kg" if p.unit == "kg" else "piece") if p else (None, None)
 
 
 def code_taken(db: Session, code: str, product_id: int | None) -> str | None:
@@ -67,7 +71,7 @@ def code_taken(db: Session, code: str, product_id: int | None) -> str | None:
 
 
 def product_dict(p: Product):
-    return {"id": p.id, "barcode": p.barcode, "name": p.name, "unit": p.unit, "piece_name": p.piece_name or "حبة",
+    return {"id": p.id, "barcode": p.barcode, "code": p.code, "name": p.name, "unit": p.unit, "piece_name": p.piece_name or "حبة",
             "barcodes": [{"code": b.code, "mode": b.mode} for b in p.extra_barcodes],
             "price": str(p.price), "cost": str(p.cost), "carton": p.carton, "stock": str(p.stock), "active": p.active}
 

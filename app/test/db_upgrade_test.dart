@@ -95,6 +95,7 @@ void main() {
     await old.close();
     final db = await LocalDb.open(path: path, factory: databaseFactoryFfi);
     expect((await db.productById(1))!.pieceName, 'حبة');
+    expect((await db.productById(1))!.code, isNull, reason: 'product numbers come with the next full download');
     expect(await db.get('version'), '0');
   });
 }
