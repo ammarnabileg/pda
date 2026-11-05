@@ -31,7 +31,8 @@ String qty(int milli, String mode) {
   return money(milli);
 }
 
-String qtyText(int milli, String mode) => '${qty(milli, mode)} ${unitNames[mode]}';
+/// "3 كرتون", "1.250 كجم", "2 علبة": [piece] is the product's own piece name.
+String qtyText(int milli, String mode, [String piece = 'حبة']) => '${qty(milli, mode)} ${mode == 'piece' ? piece : unitNames[mode]}';
 
 /// price (fils) x quantity (milli), rounded half up to whole fils.
 int lineTotal(int priceFils, int qtyMilli) {

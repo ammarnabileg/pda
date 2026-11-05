@@ -88,15 +88,19 @@ class _SaleScreenState extends State<SaleScreen> {
   /// Units for the summary: pieces (cartons counted as their pieces) and kilograms.
   String get unitsSummary {
     var pieces = 0, grams = 0;
+    final names = <String>{};
     for (final l in lines) {
       final p = products[l.productId]!;
       if (l.mode == 'kg') {
         grams += l.qty;
       } else {
         pieces += p.toBase(l.qty, l.mode) ~/ 1000;
+        names.add(p.pieceName);
       }
     }
-    return [if (pieces > 0) '$pieces حبة', if (grams > 0) '${money(grams)} كجم'].join(' + ');
+    // One name when every item uses it (علبة), otherwise the neutral وحدة.
+    final name = names.length == 1 ? names.first : 'وحدة';
+    return [if (pieces > 0) '$pieces $name', if (grams > 0) '${money(grams)} كجم'].join(' + ');
   }
 
   /// Adds to the sale. Same product in the same unit: added to that line straight away
@@ -116,16 +120,16 @@ class _SaleScreenState extends State<SaleScreen> {
     }
     if (same != null) {
       final line = same;
-      _bring(line..qty += qty, '+${qtyText(qty, mode)}');
+      _bring(line..qty += qty, '+${p.qtyOf(qty, mode)}');
       toast(
         context,
-        'اتزوّد على البند: ${qtyText(line.qty, mode)}',
+        'اتزوّد على البند: ${p.qtyOf(line.qty, mode)}',
         undoLabel: 'بند منفصل',
         undo: () {
           if (!mounted || !lines.contains(line)) return;
           line.qty -= qty;
           if (line.qty <= 0) lines.remove(line);
-          _bring(SaleLine(p.id, mode, qty), '+${qtyText(qty, mode)}');
+          _bring(SaleLine(p.id, mode, qty), '+${p.qtyOf(qty, mode)}');
         },
       );
       return;
@@ -141,7 +145,7 @@ class _SaleScreenState extends State<SaleScreen> {
             children: [
               Text(p.name, style: T.heading),
               const SizedBox(height: S.xs),
-              Text('موجود في الفاتورة: ${qtyText(existing.qty, existing.mode)}\nالمسح ده: ${qtyText(qty, mode)}', style: T.label),
+              Text('موجود في الفاتورة: ${p.qtyOf(existing.qty, existing.mode)}\nالمسح ده: ${p.qtyOf(qty, mode)}', style: T.label),
               const SizedBox(height: S.m),
               BigButton('زوّد على البند القديم', icon: Icons.add, onPressed: () => Navigator.pop(ctx, 'merge')),
               const SizedBox(height: S.s),
@@ -157,11 +161,11 @@ class _SaleScreenState extends State<SaleScreen> {
         existing
           ..mode = 'piece'
           ..qty = pieces;
-        _bring(existing, '+${qtyText(qty, mode)}');
+        _bring(existing, '+${p.qtyOf(qty, mode)}');
         return;
       }
     }
-    _bring(SaleLine(p.id, mode, qty), '+${qtyText(qty, mode)}');
+    _bring(SaleLine(p.id, mode, qty), '+${p.qtyOf(qty, mode)}');
   }
 
   /// Puts [line] at the top of the list and highlights it.
@@ -186,6 +190,7 @@ class _SaleScreenState extends State<SaleScreen> {
       final r = await numberPad(
         context,
         title: p.name,
+        pieceName: p.pieceName,
         hint: '${money(p.price)} ${W.currency} / كجم — اكتب الوزن من الميزان',
         modes: const ['kg'],
         preview: (q, m) => 'الإجمالي: ${money(lineTotal(p.price, q))} ${W.currency}',
@@ -209,12 +214,13 @@ class _SaleScreenState extends State<SaleScreen> {
     final r = await numberPad(
       context,
       title: p.name,
+      pieceName: p.pieceName,
       hint: l.mode == 'kg' ? 'اكتب الوزن من الميزان' : 'اكتب الكمية',
       modes: p.modes,
       mode: l.mode,
       initial: l.qty,
       carton: p.carton,
-      preview: (q, m) => '${money(p.unitPrice(m))} × ${qtyText(q, m)} = ${money(lineTotal(p.unitPrice(m), q))} ${W.currency}',
+      preview: (q, m) => '${money(p.unitPrice(m))} × ${p.qtyOf(q, m)} = ${money(lineTotal(p.unitPrice(m), q))} ${W.currency}',
     );
     if (r?.scanned != null) return _onScan(r!.scanned!);
     if (r == null) return;
@@ -255,9 +261,9 @@ class _SaleScreenState extends State<SaleScreen> {
             Text(p.name, style: T.heading),
             const SizedBox(height: S.s),
             seeCost
-                ? _kv('بيع / شراء', '${money(p.unitPrice(l.mode))} / ${money(p.unitCost(l.mode))} ${W.currency} لل${unitNames[l.mode]}')
-                : _kv('السعر', '${money(p.unitPrice(l.mode))} ${W.currency} لل${unitNames[l.mode]}'),
-            _kv('الكمية', qtyText(l.qty, l.mode) + (l.mode == 'carton' ? ' = ${qty(l.qty * p.carton, 'piece')} حبة' : '')),
+                ? _kv('بيع / شراء', '${money(p.unitPrice(l.mode))} / ${money(p.unitCost(l.mode))} ${W.currency} لل${p.unitName(l.mode)}')
+                : _kv('السعر', '${money(p.unitPrice(l.mode))} ${W.currency} لل${p.unitName(l.mode)}'),
+            _kv('الكمية', p.qtyOf(l.qty, l.mode) + (l.mode == 'carton' ? ' = ${qty(l.qty * p.carton, 'piece')} ${p.pieceName}' : '')),
             _kv('إجمالي السطر', '${money(_lineTotal(l))} ${W.currency}'),
             const SizedBox(height: S.m),
             Row(
@@ -362,6 +368,7 @@ class _SaleScreenState extends State<SaleScreen> {
           {
             'name': products[l.productId]!.name,
             'mode': l.mode,
+            'pn': products[l.productId]!.pieceName,
             'qty': l.qty,
             'price': products[l.productId]!.unitPrice(l.mode),
             'total': _lineTotal(l),
@@ -515,12 +522,12 @@ class _SaleScreenState extends State<SaleScreen> {
       details: Text(
         kg
             ? '${qty(l.qty, 'kg')} كجم × ${money(up)}'
-            : '${money(up)} × ${qtyText(l.qty, l.mode)}${l.mode == 'carton' ? ' (${qty(l.qty * p.carton, 'piece')} حبة)' : ''}',
+            : '${money(up)} × ${p.qtyOf(l.qty, l.mode)}${l.mode == 'carton' ? ' (${qty(l.qty * p.carton, 'piece')} ${p.pieceName})' : ''}',
       ),
       controls: kg
-          ? QtyStepper(text: qtyText(l.qty, l.mode), onTapQty: () => _editQty(l))
+          ? QtyStepper(text: p.qtyOf(l.qty, l.mode), onTapQty: () => _editQty(l))
           : QtyStepper(
-              text: qtyText(l.qty, l.mode),
+              text: p.qtyOf(l.qty, l.mode),
               onTapQty: () => _editQty(l),
               onPlus: () {
                 setState(() => l.qty += 1000);

@@ -73,4 +73,28 @@ void main() {
     expect(e.roleName, 'كاشير');
     expect(await db.get('version'), '0', reason: 'next sync downloads the real permissions');
   });
+
+  test('version 6 upgrades to 7: products get their unit name, full download forced', () async {
+    sqfliteFfiInit();
+    final path = '${Directory.systemTemp.createTempSync('tamween_upgrade7').path}/t.db';
+    final old = await databaseFactoryFfi.openDatabase(
+      path,
+      options: OpenDatabaseOptions(
+        version: 6,
+        onCreate: (db, v) async {
+          await db.execute(
+            '''CREATE TABLE products(id INTEGER PRIMARY KEY, barcode TEXT NOT NULL, name TEXT NOT NULL,
+            unit TEXT NOT NULL, price INTEGER NOT NULL, cost INTEGER NOT NULL DEFAULT 0, carton INTEGER NOT NULL, stock INTEGER NOT NULL, active INTEGER NOT NULL)''',
+          );
+          await db.execute('CREATE TABLE kv(key TEXT PRIMARY KEY, value TEXT NOT NULL)');
+        },
+      ),
+    );
+    await old.insert('products', {'id': 1, 'barcode': '1', 'name': 'x', 'unit': 'piece', 'price': 1, 'carton': 0, 'stock': 0, 'active': 1});
+    await old.insert('kv', {'key': 'version', 'value': '99'});
+    await old.close();
+    final db = await LocalDb.open(path: path, factory: databaseFactoryFfi);
+    expect((await db.productById(1))!.pieceName, 'حبة');
+    expect(await db.get('version'), '0');
+  });
 }

@@ -1,0 +1,96 @@
+{% extends "base.html" %}{% block title %}باركودات الأصناف{% endblock %}
+{% block content %}
+<div class="bar"><h1>باركودات الأصناف</h1></div>
+<p class="muted">كل الأصناف في صفحة واحدة. حط المؤشر في خانة الصنف وامسح الباركود: بيتحفظ على طول، والمؤشر بينزل على الصنف اللي بعده. اختار نوع الباركود (علبة / حبة / كرتون / كيلو) جنب الخانة، والاختيار بيفضل زي ما هو للأصناف اللي بعدها.</p>
+<div class="card bar no-print">
+  <div style="flex:2;min-width:220px"><label for="filter">دوّر (اسم أو باركود)</label><input id="filter" autocomplete="off" placeholder="اكتب أو امسح باركود" value="{{ q }}"></div>
+  <div class="tabs" style="align-self:end;margin:0">{% for k, l in [("active", "الفعّال"), ("missing", "ناقصه باركود كرتون (" ~ missing ~ ")"), ("all", "الكل")] %}<a href="?show={{ k }}" class="{{ 'on' if show == k }}">{{ l }}</a>{% endfor %}</div>
+  {% if user.is_admin %}<label class="check" style="align-self:end"><input type="checkbox" id="next" checked> بعد الحفظ روح للصنف اللي بعده</label>{% endif %}
+</div>
+<div id="msg" class="alert" role="status" aria-live="polite" hidden></div>
+<div class="table-wrap" style="max-height:none"><table id="bc"><thead><tr><th class="num">م</th><th>الصنف</th><th>الوحدة</th><th>الباركودات</th>{% if user.is_admin %}<th class="no-print">إضافة باركود</th>{% endif %}</tr></thead>
+<tbody>
+{% for r in rows %}<tr data-id="{{ r.id }}" data-unit="{{ r.unit }}" data-search="{{ r.name }} {% for c in r.codes %}{{ c.code }} {% endfor %}">
+  <td class="num">{{ loop.index }}</td>
+  <td><a href="/products/{{ r.id }}">{{ r.name }}</a>{% if r.missing_carton %} <span class="pill p-warn">ناقص باركود كرتون</span>{% endif %}</td>
+  <td class="unit-cell">{% if r.unit == 'kg' %}<span class="pill p-gray">كيلو</span>{% elif user.is_admin %}
+    <select class="pn" aria-label="اسم الوحدة لـ {{ r.name }}">{% for n in PIECE_NAMES %}<option {{ 'selected' if n == r.piece_name }}>{{ n }}</option>{% endfor %}</select>
+    <label class="ct">كرتون <input class="carton" value="{{ r.carton }}" inputmode="numeric" dir="ltr" aria-label="عدد الحبات في كرتون {{ r.name }}"></label>
+    {% else %}{{ r.piece_name }}{% if r.carton %} · كرتون {{ r.carton }}{% endif %}{% endif %}</td>
+  <td class="codes">{% for c in r.codes %}<span class="code {{ 'main' if c.main }}" data-code="{{ c.code }}"><b dir="ltr">{{ c.code }}</b> {{ c.name }}{% if c.main %} · أساسي{% endif %}{% if user.is_admin %}<button type="button" class="x" title="شيل الباركود ده" aria-label="شيل {{ c.code }}">×</button>{% endif %}</span>{% endfor %}</td>
+  {% if user.is_admin %}<td class="add no-print"><input class="code-in" placeholder="امسح هنا" dir="ltr" autocomplete="off" aria-label="باركود جديد لـ {{ r.name }}">
+    <select class="mode" aria-label="نوع الباركود">{% if r.unit == 'kg' %}<option value="kg">كيلو</option>{% else %}<option value="piece">{{ r.piece_name }}</option><option value="carton" {{ 'disabled' if not r.carton }}>كرتون</option>{% endif %}</select></td>{% endif %}
+</tr>{% else %}<tr><td colspan="5" class="muted">مفيش أصناف</td></tr>{% endfor %}
+</tbody></table></div>
+{% if user.is_admin %}
+<script>
+const tbody = document.querySelector('#bc tbody'), msg = document.getElementById('msg')
+let lastMode = 'piece'
+function say(text, ok) { msg.hidden = false; msg.textContent = text; msg.className = 'alert ' + (ok ? 'ok' : 'error') }
+function esc(s) { return String(s).replace(/[&<>"]/g, c => ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;'}[c])) }
+function paint(tr, row) {
+  tr.querySelector('.codes').innerHTML = row.codes.map(c => `<span class="code ${c.main ? 'main' : ''}" data-code="${esc(c.code)}"><b dir="ltr">${esc(c.code)}</b> ${esc(c.name)}${c.main ? ' · أساسي' : ''}<button type="button" class="x" title="شيل الباركود ده">×</button></span>`).join('')
+  tr.dataset.search = row.name + ' ' + row.codes.map(c => c.code).join(' ')
+  const sel = tr.querySelector('.mode')
+  if (sel && row.unit !== 'kg') {
+    sel.options[0].textContent = row.piece_name
+    sel.options[1].disabled = !row.carton
+    if (!row.carton && sel.value === 'carton') sel.value = 'piece'
+  }
+  const flag = tr.querySelector('.pill.p-warn'); if (flag && !row.missing_carton) flag.remove()
+}
+async function send(tr, body) {
+  const r = await fetch('/barcodes/' + tr.dataset.id, {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body)})
+  let j = null
+  try { j = await r.json() } catch (e) { say(r.status === 403 ? 'التعديل للمدير بس' : 'حصل خطأ، جرّب تاني', false); return null }
+  if (!r.ok) { say(j.error || 'حصل خطأ', false); tr.classList.add('bad'); setTimeout(() => tr.classList.remove('bad'), 1500); return null }
+  paint(tr, j.row); say(j.msg, true); tr.classList.add('good'); setTimeout(() => tr.classList.remove('good'), 1200)
+  return j
+}
+function visibleRows() { return [...tbody.rows].filter(r => r.dataset.id && !r.hidden) }
+tbody.addEventListener('keydown', async e => {
+  if (e.key !== 'Enter' || !e.target.classList.contains('code-in')) return
+  e.preventDefault()
+  const inp = e.target, tr = inp.closest('tr'), code = inp.value.trim()
+  if (!code) return
+  const mode = tr.querySelector('.mode').value
+  inp.disabled = true
+  const ok = await send(tr, {action: 'add', code, mode})
+  inp.disabled = false
+  if (ok) {
+    inp.value = ''
+    if (document.getElementById('next').checked) {
+      const rows = visibleRows(), i = rows.indexOf(tr), nx = rows[i + 1]
+      if (nx) { const ni = nx.querySelector('.code-in'); const ns = nx.querySelector('.mode')
+        if (ns && [...ns.options].some(o => o.value === lastMode && !o.disabled)) ns.value = lastMode
+        ni.focus(); nx.scrollIntoView({block: 'center'}) }
+    } else inp.focus()
+  } else { inp.select(); inp.focus() }
+})
+tbody.addEventListener('change', e => {
+  const tr = e.target.closest('tr')
+  if (e.target.classList.contains('mode')) lastMode = e.target.value
+  if (e.target.classList.contains('pn') || e.target.classList.contains('carton'))
+    send(tr, {action: 'unit', piece_name: tr.querySelector('.pn').value, carton: tr.querySelector('.carton').value})
+})
+tbody.addEventListener('click', e => {
+  if (!e.target.classList.contains('x')) return
+  const tr = e.target.closest('tr'), code = e.target.closest('.code').dataset.code
+  if (confirm('تشيل الباركود ' + code + '؟')) send(tr, {action: 'remove', code})
+})
+tbody.addEventListener('dblclick', e => {
+  const chip = e.target.closest('.code'); if (!chip || chip.classList.contains('main')) return
+  const tr = chip.closest('tr')
+  if (confirm('تخلّي ' + chip.dataset.code + ' هو الباركود الأساسي؟')) send(tr, {action: 'main', code: chip.dataset.code})
+})
+</script>
+{% endif %}
+<script>
+// Instant filter; a scanned barcode in the filter box finds its product.
+const f = document.getElementById('filter')
+function run() { const v = f.value.trim(); for (const r of document.querySelectorAll('#bc tbody tr[data-id]')) r.hidden = v && !r.dataset.search.includes(v) }
+f.addEventListener('input', run)
+f.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); run(); const r = [...document.querySelectorAll('#bc tbody tr[data-id]')].find(x => !x.hidden); const i = r && r.querySelector('.code-in'); if (i) i.focus() } })
+run()
+</script>
+{% endblock %}

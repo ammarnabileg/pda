@@ -137,7 +137,8 @@ class _NewReceiptScreenState extends State<NewReceiptScreen> {
     final r = await numberPad(
       context,
       title: p.name,
-      hint: existing != null ? 'مستلم قبل كده: ${qtyText(existing.qty, existing.mode)} — الجديد هيتجمع عليه' : 'اكتب الكمية اللي وصلت',
+      pieceName: p.pieceName,
+      hint: existing != null ? 'مستلم قبل كده: ${p.qtyOf(existing.qty, existing.mode)} — الجديد هيتجمع عليه' : 'اكتب الكمية اللي وصلت',
       modes: p.modes,
       mode: h.mode == 'carton' && p.carton > 0 ? 'carton' : null,
       carton: p.carton,
@@ -174,7 +175,7 @@ class _NewReceiptScreenState extends State<NewReceiptScreen> {
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
             Text(p.name, style: T.heading),
-            Text('مستلم: ${qtyText(l.qty, l.mode)}', style: T.sub),
+            Text('مستلم: ${products[l.productId]!.qtyOf(l.qty, l.mode)}', style: T.sub),
             const SizedBox(height: S.m),
             Row(
               children: [
@@ -195,7 +196,15 @@ class _NewReceiptScreenState extends State<NewReceiptScreen> {
     );
     if (!mounted) return;
     if (a == 'edit') {
-      final r = await numberPad(context, title: p.name, modes: p.modes, mode: l.mode, initial: l.qty, carton: p.carton);
+      final r = await numberPad(
+        context,
+        title: p.name,
+        pieceName: p.pieceName,
+        modes: p.modes,
+        mode: l.mode,
+        initial: l.qty,
+        carton: p.carton,
+      );
       if (r?.scanned != null) return _onScan(r!.scanned!);
       if (r != null) {
         setState(() {
@@ -274,7 +283,7 @@ class _NewReceiptScreenState extends State<NewReceiptScreen> {
           {
             'product_id': l.productId,
             'name': products[l.productId]!.name,
-            'received': qtyText(l.qty, l.mode),
+            'received': products[l.productId]!.qtyOf(l.qty, l.mode),
             'status': 'مستني موافقة المشرف',
             'note': l.note,
           },
@@ -351,7 +360,7 @@ class _NewReceiptScreenState extends State<NewReceiptScreen> {
                       TextSpan(
                         children: [
                           const TextSpan(text: 'مستلم '),
-                          TextSpan(text: qtyText(l.qty, l.mode), style: T.subStrong),
+                          TextSpan(text: products[l.productId]!.qtyOf(l.qty, l.mode), style: T.subStrong),
                           if (l.note != null)
                             TextSpan(
                               text: '\nملاحظة: ${l.note}',

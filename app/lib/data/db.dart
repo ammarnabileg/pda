@@ -17,7 +17,7 @@ class LocalDb {
     final file = path ?? p.join(await f.getDatabasesPath(), 'tamween.db');
     final db = await f.openDatabase(
       file,
-      options: OpenDatabaseOptions(version: 6, onCreate: _create, onUpgrade: _upgrade),
+      options: OpenDatabaseOptions(version: 7, onCreate: _create, onUpgrade: _upgrade),
     );
     return LocalDb(db);
   }
@@ -39,6 +39,14 @@ class LocalDb {
         if (!cols.contains('permissions')) await db.execute('ALTER TABLE employees ADD COLUMN permissions TEXT');
       }
       // Permissions only arrive with a full download; until then the old fixed roles apply.
+      await db.insert('kv', {'key': 'version', 'value': '0'}, conflictAlgorithm: ConflictAlgorithm.replace);
+    }
+    if (from < 7) {
+      final cols = (await db.rawQuery('PRAGMA table_info(products)')).map((c) => c['name']).toSet();
+      if (cols.isNotEmpty && !cols.contains('piece_name')) {
+        await db.execute("ALTER TABLE products ADD COLUMN piece_name TEXT NOT NULL DEFAULT 'حبة'");
+      }
+      // Unit names only arrive with a full download.
       await db.insert('kv', {'key': 'version', 'value': '0'}, conflictAlgorithm: ConflictAlgorithm.replace);
     }
     if (from < 3) {
@@ -68,10 +76,9 @@ class LocalDb {
   }
 
   static Future<void> _create(Database db, int version) async {
-    await db.execute(
-      '''CREATE TABLE products(id INTEGER PRIMARY KEY, barcode TEXT NOT NULL, name TEXT NOT NULL,
-      unit TEXT NOT NULL, price INTEGER NOT NULL, cost INTEGER NOT NULL DEFAULT 0, carton INTEGER NOT NULL, stock INTEGER NOT NULL, active INTEGER NOT NULL)''',
-    );
+    await db.execute('''CREATE TABLE products(id INTEGER PRIMARY KEY, barcode TEXT NOT NULL, name TEXT NOT NULL,
+      unit TEXT NOT NULL, price INTEGER NOT NULL, cost INTEGER NOT NULL DEFAULT 0, carton INTEGER NOT NULL, stock INTEGER NOT NULL, active INTEGER NOT NULL,
+      piece_name TEXT NOT NULL DEFAULT 'حبة')''');
     await db.execute('CREATE INDEX products_barcode ON products(barcode)');
     await _createBarcodes(db);
     await _createHistory(db);
@@ -147,7 +154,7 @@ class LocalDb {
 
   Future<List<String>> barcodesOf(int productId) async {
     final r = await db.query('barcodes', columns: ['code', 'mode'], where: 'product_id = ?', whereArgs: [productId]);
-    return [for (final x in r) '${x['code']} (${x['mode'] == 'carton' ? 'كرتون' : (x['mode'] == 'kg' ? 'كيلو' : 'حبة')})'];
+    return [for (final x in r) '${x['code']} (${x['mode'] == 'carton' ? 'كرتون' : (x['mode'] == 'kg' ? 'كيلو' : 'الوحدة')})'];
   }
 
   Future<List<Product>> searchProducts(String q, {int limit = 40}) async {
@@ -218,6 +225,25 @@ class LocalDb {
   Future<void> markReceiptSent(int id) => db.update('receipts', {'status': 'sent'}, where: 'id = ?', whereArgs: [id]);
 
   // ---------- server pull ----------
+
+  /// One product as the server sent it (after a barcode change on this device).
+  Future<void> saveProduct(Map<String, dynamic> j) => db.transaction((txn) async {
+    await txn.insert('products', Product.fromApi(j).toRow(), conflictAlgorithm: ConflictAlgorithm.replace);
+    await txn.delete('barcodes', where: 'product_id = ?', whereArgs: [j['id']]);
+    for (final b in (j['barcodes'] as List?) ?? const []) {
+      await txn.insert('barcodes', {
+        'code': b['code'],
+        'product_id': j['id'],
+        'mode': b['mode'],
+      }, conflictAlgorithm: ConflictAlgorithm.replace);
+    }
+  });
+
+  /// Extra barcodes of a product: (code, mode).
+  Future<List<(String, String)>> extraBarcodes(int productId) async {
+    final r = await db.query('barcodes', where: 'product_id = ?', whereArgs: [productId], orderBy: 'rowid');
+    return [for (final x in r) (x['code'] as String, x['mode'] as String)];
+  }
 
   Future<void> applyPull(Map<String, dynamic> data) async {
     await db.transaction((txn) async {

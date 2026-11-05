@@ -284,7 +284,7 @@ class _ReceiveScreenState extends State<ReceiveScreen> {
   String _amount(Product p, int base) {
     if (p.isKg) return '${money(base)} كجم';
     if (p.carton > 0 && base % (p.carton * 1000) == 0) return '${base ~/ (p.carton * 1000)} كرتون';
-    return '${qty(base, 'piece')} حبة';
+    return '${qty(base, 'piece')} ${p.pieceName}';
   }
 
   Future<void> _qty(int pid, {bool isExtra = false, String? scannedMode}) async {
@@ -294,8 +294,9 @@ class _ReceiveScreenState extends State<ReceiveScreen> {
     final res = await numberPad(
       context,
       title: p.name,
+      pieceName: p.pieceName,
       hint: l != null
-          ? 'المطلوب: ${qtyText(l.ordered, l.mode)} — اكتب اللي وصل فعلاً (صفر لو ماوصلش)'
+          ? 'المطلوب: ${p.qtyOf(l.ordered, l.mode)} — اكتب اللي وصل فعلاً (صفر لو ماوصلش)'
           : 'صنف مش في السند — اكتب الكمية اللي وصلت',
       modes: p.modes,
       // Only a carton barcode changes the unit; the item's normal barcode keeps the ordered unit.
@@ -413,8 +414,8 @@ class _ReceiveScreenState extends State<ReceiveScreen> {
         for (final pid in all)
           {
             'name': products[pid]!.name,
-            'ordered': _line(pid) == null ? null : qtyText(_line(pid)!.ordered, _line(pid)!.mode),
-            'received': qtyText(recv[pid]!.qty, recv[pid]!.mode),
+            'ordered': _line(pid) == null ? null : products[pid]!.qtyOf(_line(pid)!.ordered, _line(pid)!.mode),
+            'received': products[pid]!.qtyOf(recv[pid]!.qty, recv[pid]!.mode),
             'status': _status(pid)!.$1,
             'note': lineNotes[pid],
           },
@@ -597,10 +598,10 @@ class _ReceiveScreenState extends State<ReceiveScreen> {
       details: Text.rich(
         TextSpan(
           children: [
-            if (l != null) ...[const TextSpan(text: 'مطلوب '), TextSpan(text: qtyText(l.ordered, l.mode), style: T.subStrong)],
+            if (l != null) ...[const TextSpan(text: 'مطلوب '), TextSpan(text: p.qtyOf(l.ordered, l.mode), style: T.subStrong)],
             if (x != null) ...[
               TextSpan(text: l != null ? ' · مستلم ' : 'مستلم '),
-              TextSpan(text: qtyText(x.qty, x.mode), style: T.subStrong),
+              TextSpan(text: p.qtyOf(x.qty, x.mode), style: T.subStrong),
             ],
             if (lineNotes[pid] != null)
               TextSpan(

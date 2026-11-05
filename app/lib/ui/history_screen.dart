@@ -197,7 +197,9 @@ class _HistoryDetail extends StatelessWidget {
               'sales' => ItemRow(
                 title: '${l['name']}',
                 amount: money((l['total'] as num).toInt()),
-                details: Text('${money((l['price'] as num).toInt())} × ${qtyText((l['qty'] as num).toInt(), l['mode'] as String)}'),
+                details: Text(
+                  '${money((l['price'] as num).toInt())} × ${qtyText((l['qty'] as num).toInt(), l['mode'] as String, (l['pn'] as String?) ?? 'حبة')}',
+                ),
               ),
               'receipts' || 'new_receipts' => ItemRow(
                 title: '${l['name']}',

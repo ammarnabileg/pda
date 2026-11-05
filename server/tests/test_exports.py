@@ -78,9 +78,9 @@ def test_import_from_excel_with_arabic_titles(admin_client, seed, db):
 
 
 def test_import_errors_save_nothing(admin_client, seed, db):
-    data = xlsx([["الباركود", "اسم الصنف", "الوحدة", "سعر البيع"], ["111", "صنف", "علبة", 1], ["222", "", "حبة", 1]])
+    data = xlsx([["الباركود", "اسم الصنف", "الوحدة", "سعر البيع"], ["111", "صنف", "دستة", 1], ["222", "", "حبة", 1]])
     r = admin_client.post("/products-import", files={"file": ("p.xlsx", data, "application/octet-stream")})
-    assert r.status_code == 400 and "سطر 2" in r.text and "سطر 3" in r.text and "علبة" in r.text
+    assert r.status_code == 400 and "سطر 2" in r.text and "سطر 3" in r.text and "دستة" in r.text
     assert db.query(Product).filter_by(barcode="111").count() == 0
     r = admin_client.post("/products-import", files={"file": ("p.xlsx", xlsx([["أي حاجة"], ["1"]]), "application/octet-stream")})
     assert r.status_code == 400 and "الباركود" in r.text

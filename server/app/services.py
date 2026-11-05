@@ -9,7 +9,7 @@ from sqlalchemy.orm import Session
 
 from .db import next_version
 from .models import (
-    AuditLog, CountLine, CountSession, Device, Employee, Product, ReceiptFile, SupplierPayment, ProductBarcode, Receipt, ReceiptLine, Sale, SaleLine, Supplier,
+    PIECE_NAMES, AuditLog, CountLine, CountSession, Device, Employee, Product, ReceiptFile, SupplierPayment, ProductBarcode, Receipt, ReceiptLine, Sale, SaleLine, Supplier,
     StockMove, now,
 )
 
@@ -67,7 +67,7 @@ def code_taken(db: Session, code: str, product_id: int | None) -> str | None:
 
 
 def product_dict(p: Product):
-    return {"id": p.id, "barcode": p.barcode, "name": p.name, "unit": p.unit,
+    return {"id": p.id, "barcode": p.barcode, "name": p.name, "unit": p.unit, "piece_name": p.piece_name or "حبة",
             "barcodes": [{"code": b.code, "mode": b.mode} for b in p.extra_barcodes],
             "price": str(p.price), "cost": str(p.cost), "carton": p.carton, "stock": str(p.stock), "active": p.active}
 
@@ -664,4 +664,69 @@ def ministry_flags(db: Session, sales) -> dict:
             f.append("total")
         out[s.id] = f
     return out
+
+def barcode_action(db: Session, p: Product, data: dict) -> str:
+    """One barcode change from the dashboard or the admin's device. Returns a short message; EditError if refused.
+    {action: add, code, mode} | {action: remove, code} | {action: main, code} | {action: unit, piece_name, carton}"""
+    action = data.get("action")
+    code = "".join(str(data.get("code") or "").split())
+    msg = ""
+    if action == "add":
+        mode = data.get("mode")
+        allowed = ("kg",) if p.unit == "kg" else (("piece", "carton") if p.carton else ("piece",))
+        if mode not in allowed:
+            raise EditError("الصنف ده مالوش كرتون. اكتب عدد الحبات في الكرتون الأول" if mode == "carton"
+                                 else "الوحدة دي ماتنفعش للصنف ده")
+        if not code or not code.isalnum() or len(code) > 40:
+            raise EditError("الباركود لازم يكون أرقام أو حروف من غير مسافات")
+        if code == p.barcode or any(b.code == code for b in p.extra_barcodes):
+            raise EditError(f"الباركود {code} متسجل على الصنف ده خلاص")
+        other = code_taken(db, code, p.id)
+        if other:
+            raise EditError(f"الباركود {code} متسجل على «{other}»")
+        p.extra_barcodes.append(ProductBarcode(code=code, mode=mode))
+        msg = f"اتضاف {code} ({p.mode_name(mode)})"
+    elif action == "remove":
+        if code == p.barcode:
+            spare = next((b for b in p.extra_barcodes if b.mode == ("kg" if p.unit == "kg" else "piece")), None)
+            if not spare:
+                raise EditError("ده الباركود الأساسي. ضيف باركود تاني للوحدة الأول، وبعدين امسح ده")
+            p.barcode = spare.code
+            p.extra_barcodes.remove(spare)
+        else:
+            b = next((b for b in p.extra_barcodes if b.code == code), None)
+            if not b:
+                raise EditError("الباركود ده مش على الصنف")
+            p.extra_barcodes.remove(b)
+        msg = f"اتشال {code}"
+    elif action == "main":
+        b = next((b for b in p.extra_barcodes if b.code == code and b.mode == ("kg" if p.unit == "kg" else "piece")), None)
+        if not b:
+            raise EditError("الأساسي لازم يكون باركود الحبة (أو الكيلو)")
+        old = p.barcode
+        p.extra_barcodes.remove(b)
+        db.flush()
+        p.barcode = code
+        p.extra_barcodes.append(ProductBarcode(code=old, mode=b.mode))
+        msg = f"{code} بقى الأساسي"
+    elif action == "unit":
+        pn = str(data.get("piece_name") or "")
+        if p.unit != "kg":
+            if pn not in PIECE_NAMES:
+                raise EditError("اختار اسم الوحدة")
+            p.piece_name = pn
+            try:
+                carton = int(str(data.get("carton", p.carton) or 0))
+            except ValueError:
+                raise EditError("عدد الحبات في الكرتون لازم يكون رقم صحيح")
+            if carton < 0 or carton > 10000:
+                raise EditError("عدد الحبات في الكرتون مش منطقي")
+            if carton == 0 and any(b.mode == "carton" for b in p.extra_barcodes):
+                raise EditError("الصنف عليه باركود كرتون. امسحه الأول أو سيب عدد الحبات")
+            p.carton = carton
+        msg = "اتحفظ"
+    else:
+        raise EditError("طلب مش مفهوم")
+    bump(db, p)
+    return msg
 

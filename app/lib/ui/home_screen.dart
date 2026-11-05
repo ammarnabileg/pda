@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import 'barcodes_screen.dart';
 import 'count_screen.dart';
 import 'history_screen.dart';
 import 'price_screen.dart';
@@ -170,6 +171,14 @@ class _HomeScreenState extends State<HomeScreen> {
                       icon: Icons.local_shipping_outlined,
                       badge: openReceipts > 0 ? '$openReceipts سند مستني' : null,
                       onTap: () => _open(const ReceiveListScreen()),
+                    ),
+                  // Changing barcodes is the admin's job only, as in the dashboard.
+                  if (e.role == 'admin')
+                    _MenuItem(
+                      title: 'الباركودات',
+                      sub: 'ضيف أو شيل باركود الحبة أو العلبة أو الكرتون',
+                      icon: Icons.qr_code_2,
+                      onTap: () => _open(const BarcodesScreen()),
                     ),
                   if (!e.can('sale') && !e.can('price') && !e.can('count') && !e.can('receive') && !e.can('new_receipt'))
                     const CardBox(

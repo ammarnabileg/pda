@@ -10,6 +10,7 @@ class Product {
   final int carton; // pieces per carton, 0 = none
   final int stock; // thousandths of the base unit
   final bool active;
+  final String pieceName; // what one piece is called: حبة, علبة, كيس ... (set in the dashboard)
 
   const Product({
     required this.id,
@@ -21,7 +22,12 @@ class Product {
     required this.carton,
     required this.stock,
     required this.active,
+    this.pieceName = 'حبة',
   });
+
+  /// كرتون / كجم / this product's piece name.
+  String unitName(String mode) => mode == 'piece' ? pieceName : unitNames[mode]!;
+  String qtyOf(int milli, String mode) => qtyText(milli, mode, pieceName);
 
   bool get isKg => unit == 'kg';
   List<String> get modes => isKg ? ['kg'] : (carton > 0 ? ['piece', 'carton'] : ['piece']);
@@ -34,10 +40,10 @@ class Product {
   String baseText(int milli) {
     if (isKg) return '${money(milli)} كجم';
     final pieces = milli ~/ 1000;
-    var t = '${qty(milli, 'piece')} حبة';
+    var t = '${qty(milli, 'piece')} $pieceName';
     if (carton > 0 && milli % 1000 == 0 && pieces.abs() >= carton) {
       final c = pieces.abs() ~/ carton, r = pieces.abs() % carton;
-      t += ' ($c كرتون${r > 0 ? ' و $r حبة' : ''})';
+      t += ' ($c كرتون${r > 0 ? ' و $r $pieceName' : ''})';
     }
     return t;
   }
@@ -52,6 +58,7 @@ class Product {
     'carton': carton,
     'stock': stock,
     'active': active ? 1 : 0,
+    'piece_name': pieceName,
   };
 
   factory Product.fromRow(Map<String, Object?> r) => Product(
@@ -64,6 +71,7 @@ class Product {
     carton: r['carton'] as int,
     stock: r['stock'] as int,
     active: (r['active'] as int) == 1,
+    pieceName: (r['piece_name'] as String?) ?? 'حبة',
   );
 
   factory Product.fromApi(Map<String, dynamic> j) => Product(
@@ -76,6 +84,7 @@ class Product {
     carton: j['carton'] as int,
     stock: parseMilli(j['stock'].toString()) ?? 0,
     active: j['active'] as bool,
+    pieceName: (j['piece_name'] as String?) ?? 'حبة',
   );
 }
 

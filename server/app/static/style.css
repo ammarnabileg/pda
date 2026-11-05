@@ -104,3 +104,14 @@ legend{font-weight:800;padding:0 6px}
 /* Same Arabic font as the PDF exports, bundled so it works offline. */
 @font-face{font-family:"Noto Sans Arabic";src:url("/static/fonts/NotoSansArabic-Regular.ttf") format("truetype");font-weight:400;font-display:swap}
 @font-face{font-family:"Noto Sans Arabic";src:url("/static/fonts/NotoSansArabic-Bold.ttf") format("truetype");font-weight:700;font-display:swap}
+#bc .code{display:inline-flex;align-items:center;gap:4px;border:1px solid #d5ddda;border-radius:8px;padding:2px 8px;margin:2px;background:#fff;font-size:14px;white-space:nowrap}
+#bc .code.main{border-color:#0f3d33;background:#e3eeea}
+#bc .code .x{border:0;background:none;color:#b42318;font-size:18px;line-height:1;cursor:pointer;padding:0 2px}
+#bc .code-in{width:170px}
+#bc .add{white-space:nowrap}
+#bc .add select,#bc .pn{width:auto;min-width:80px}
+#bc .carton{width:60px}
+#bc .ct{display:inline-flex;align-items:center;gap:4px;font-weight:600;font-size:14px}
+#bc tr.good td{background:#e7f6ec;transition:background .2s}
+#bc tr.bad td{background:#fdecea}
+#bc .code b{font-family:ui-monospace,Consolas,"Courier New",monospace;font-weight:700;letter-spacing:0;display:inline-block;unicode-bidi:isolate}

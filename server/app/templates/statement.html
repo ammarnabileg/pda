@@ -46,8 +46,8 @@
   <div class="table-wrap" style="max-height:none"><table><thead><tr><th class="num">م</th><th>الصنف</th><th>المطلوب</th><th>المستلم</th><th>الفرق</th><th class="num">سعر الشراء</th><th class="num">القيمة</th></tr></thead>
   {% for l in r.lines %}{% set cost = l.unit_cost if l.unit_cost is not none else l.product.cost %}
   <tr><td class="num">{{ loop.index }}</td><td>{{ l.product.name }}{% if l.note %}<div class="muted" style="font-size:14px">{{ l.note }}</div>{% endif %}</td>
-    <td>{% if l.extra %}—{% else %}{{ l.ordered|qty(l.product.unit) }} {{ MODES[l.mode] }}{% endif %}</td>
-    <td>{{ (l.received or 0)|qty(l.product.unit) }} {{ MODES[l.received_mode or l.mode] }}</td>
+    <td>{% if l.extra %}—{% else %}{{ l.ordered|qty(l.product.unit) }} {{ l.product.mode_name(l.mode) }}{% endif %}</td>
+    <td>{{ (l.received or 0)|qty(l.product.unit) }} {{ l.product.mode_name(l.received_mode or l.mode) }}</td>
     <td>{% set d = l.diff_base %}{% if d is none or d == 0 %}<span class="zero">مطابق</span>{% elif d < 0 %}<span class="neg">ناقص {{ base_text(l.product, -d) }}</span>{% else %}<span class="pos">زيادة {{ base_text(l.product, d) }}</span>{% endif %}</td>
     <td class="num">{{ cost|money }}{% if l.unit_cost is none %}*{% endif %}</td><td class="num">{{ ((l.received_base or 0) * cost)|money }}</td></tr>
   {% endfor %}

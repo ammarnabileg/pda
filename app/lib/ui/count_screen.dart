@@ -133,6 +133,7 @@ class _CountScreenState extends State<CountScreen> {
     final r = await numberPad(
       context,
       title: p.name,
+      pieceName: p.pieceName,
       hint: prev > 0 ? 'معدود قبل كده: ${p.baseText(prev)} — العدد الجديد هيتجمع عليه' : 'اكتب العدد الموجود على الرف',
       modes: p.modes,
       mode: h.mode == 'carton' && p.carton > 0 ? 'carton' : null, // carton barcode: counting cartons
@@ -176,6 +177,7 @@ class _CountScreenState extends State<CountScreen> {
     final r = await numberPad(
       context,
       title: p.name,
+      pieceName: p.pieceName,
       hint: 'العدد الحالي: ${p.baseText(l.base)} — العدد الجديد هيحل محله',
       modes: p.modes,
       mode: p.isKg ? 'kg' : 'piece',

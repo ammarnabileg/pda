@@ -41,6 +41,7 @@ class Api {
       throw ApiException('offline');
     }
     if (r.statusCode == 401) throw ApiException('unpaired');
+    if (r.statusCode == 403) throw ApiException('forbidden');
     if (r.statusCode == 400) {
       try {
         throw ApiException((jsonDecode(utf8.decode(r.bodyBytes))['detail'] ?? 'server').toString());
@@ -99,6 +100,10 @@ class Api {
     final parts = ct.split('/');
     return MediaType(parts.first, parts.length > 1 ? parts[1] : 'octet-stream');
   }
+
+  /// Barcodes screen (admin only): applied on the server at once. Returns {ok, msg | error, product}.
+  Future<Map<String, dynamic>> barcodeAction(int productId, Map<String, Object?> body) =>
+      _send(() => _client.post(Uri.parse('$baseUrl/api/v1/products/$productId/barcodes'), headers: _headers, body: jsonEncode(body)));
 
   Future<Map<String, dynamic>> push(Map<String, Object?> payload) => _send(
     () => _client.post(Uri.parse('$baseUrl/api/v1/sync/push'), headers: _headers, body: jsonEncode(payload)),

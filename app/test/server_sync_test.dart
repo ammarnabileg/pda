@@ -6,6 +6,7 @@ import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
+import 'package:tamween_pda/data/api.dart';
 import 'package:tamween_pda/data/app_state.dart';
 import 'package:tamween_pda/data/db.dart';
 import 'package:tamween_pda/util/format.dart';
@@ -117,6 +118,20 @@ void main() {
       await app.sync();
       expect(app.rejected, 0);
       expect(app.pending, 0, reason: 'voucher first, then its photo, in one sync');
+
+      // Barcodes screen: the admin adds a carton barcode; it is saved on the server and on this device at once.
+      final admin = staff.firstWhere((e) => e.role == 'admin');
+      final res = await app.api.barcodeAction(rice.id, {
+        'employee_id': admin.id,
+        'action': 'add',
+        'code': '96281000123456',
+        'mode': 'carton',
+      });
+      expect(res['ok'], isTrue, reason: '$res');
+      await db.saveProduct(res['product'] as Map<String, dynamic>);
+      expect((await db.lookup('96281000123456'))?.mode, 'carton');
+      final denied = app.api.barcodeAction(rice.id, {'employee_id': ahmad.id, 'action': 'add', 'code': '1', 'mode': 'piece'});
+      await expectLater(denied, throwsA(isA<ApiException>().having((e) => e.code, 'code', 'forbidden')));
 
       // The same receipt again is now rejected: it was already received.
       await db.enqueue('receipts', '${r.id}', {'receipt_id': r.id, 'lines': []});

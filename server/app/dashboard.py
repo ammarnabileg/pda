@@ -11,7 +11,7 @@ from urllib.parse import quote, urlencode
 from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends, Request
-from fastapi.responses import HTMLResponse, RedirectResponse, Response, StreamingResponse
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response, StreamingResponse
 from fastapi.templating import Jinja2Templates
 from sqlalchemy import Date, String, case, cast, func, or_, select
 from sqlalchemy.orm import Session
@@ -20,7 +20,7 @@ from . import config, exports, services
 from .exports import Col, Report, Table
 from .db import get_db
 from .models import (
-    ADMIN_ROLE, MODES, PERMISSIONS, UNITS, AuditLog, CountLine, CountSession, Device, Employee, Product, ProductBarcode, Receipt, ReceiptLine,
+    ADMIN_ROLE, MODES, PERMISSIONS, PIECE_NAMES, UNITS, AuditLog, CountLine, CountSession, Device, Employee, Product, ProductBarcode, Receipt, ReceiptLine,
     ReceiptFile, Role, Sale, SaleLine, StockMove, Supplier, SupplierPayment, PAYMENT_METHODS, now,
 )
 from .security import hash_password, hash_pin, new_pairing_code, verify_password, verify_pin
@@ -51,15 +51,16 @@ def base_text(p: Product, base):
     base = Decimal(base or 0)
     if p.unit == "kg":
         return f"{fmt_qty(base, 'kg')} كجم"
-    text = f"{fmt_qty(base)} حبة"
+    piece = p.piece_name or "حبة"
+    text = f"{fmt_qty(base)} {piece}"
     if p.carton and abs(base) >= p.carton and base == base.to_integral_value():
         c, r = divmod(int(abs(base)), p.carton)
-        text += f" ({c} كرتون" + (f" و {r} حبة" if r else "") + ")"
+        text += f" ({c} كرتون" + (f" و {r} {piece}" if r else "") + ")"
     return text
 
 
 templates.env.filters.update(money=fmt_money, qty=fmt_qty, dt=fmt_dt)
-templates.env.globals.update(COOP_NAME=config.COOP_NAME, PERMISSIONS=PERMISSIONS, UNITS=UNITS, MODES=MODES, base_text=base_text)
+templates.env.globals.update(PIECE_NAMES=PIECE_NAMES, COOP_NAME=config.COOP_NAME, PERMISSIONS=PERMISSIONS, UNITS=UNITS, MODES=MODES, base_text=base_text)
 
 
 def render(request: Request, name: str, ctx: dict | None = None, status: int = 200):
@@ -300,7 +301,7 @@ def products(request: Request, q: str = "", status: str = "active", low: int = 0
                            Col("باركودات تانية", "text", 1.6), Col("الوحدة", "text", .8), Col("حبات الكرتون", "int", .7),
                            Col("سعر البيع", "money"), Col("سعر الشراء", "money"), Col("الرصيد", "qty"),
                            Col("حد الطلب", "qty", .8), Col("الحالة", "text", .7)],
-                          [[i, p.name, p.barcode, " ".join(b.code for b in p.extra_barcodes), UNITS.get(p.unit, p.unit),
+                          [[i, p.name, p.barcode, " ".join(b.code for b in p.extra_barcodes), p.unit_name,
                             p.carton or "", p.price, p.cost, p.stock, p.min_stock, "فعّال" if p.active else "موقوف"]
                            for i, p in enumerate(rows, 1)])]))
     total = db.scalar(select(func.count()).select_from(stmt.subquery()))
@@ -372,6 +373,8 @@ def apply_product_form(db, p: Product, f, extra):
     p.barcode = str(f.get("barcode")).strip()
     p.name = str(f.get("name")).strip()
     p.unit = f.get("unit")
+    pn = str(f.get("piece_name") or "").strip()
+    p.piece_name = pn if pn in PIECE_NAMES else (p.piece_name or "حبة")
     p.price = services.d3(dec(f.get("price")))
     p.cost = services.d3(dec(f.get("cost") or 0))
     p.carton = 0 if p.unit == "kg" else int(str(f.get("carton") or "0").strip())
@@ -431,7 +434,7 @@ def product_detail(pid: int, request: Request, user=Depends(need["products"]), d
         reasons = {"sale": "بيع", "receipt": "استلام", "count": "جرد", "manual": "يدوي", "edit": "تعديل محاسبة"}
         return send_report(request, Report(
             title=f"كارت صنف: {p.name}", filename=f"product-{p.id}",
-            info=[("الباركود", p.barcode), ("الوحدة", UNITS.get(p.unit, p.unit)), ("سعر البيع", fmt_money(p.price)),
+            info=[("الباركود", p.barcode), ("الوحدة", p.unit_name), ("سعر البيع", fmt_money(p.price)),
                   ("سعر الشراء", fmt_money(p.cost)), ("الرصيد", base_text(p, p.stock)), ("حد الطلب", fmt_qty(p.min_stock, p.unit)),
                   ("حبات الكرتون", p.carton or "—"), ("باركودات تانية", " ".join(b.code for b in p.extra_barcodes) or "—")],
             tables=[Table([Col("م", "int", .4), Col("الوقت", "text", 1.3), Col("سعر البيع قبل", "money"), Col("سعر البيع بعد", "money"),
@@ -475,7 +478,7 @@ IMPORT_ALIASES = {**{k: k for k in IMPORT_COLUMNS}, **{v: k for k, v in IMPORT_T
                   "الصنف": "name", "الاسم": "name", "نوع البيع": "unit", "عدد الحبات في الكرتون": "carton",
                   "الباركود الأساسي": "barcode", "باركودات إضافية": "extra_barcodes"}
 UNIT_ALIASES = {"piece": "piece", "حبة": "piece", "بالحبة": "piece", "حبه": "piece", "kg": "kg", "كيلو": "kg",
-                "بالكيلو": "kg", "كجم": "kg", "كيلوجرام": "kg"}
+                "بالكيلو": "kg", "كجم": "kg", "كيلوجرام": "kg", **{n: "piece" for n in PIECE_NAMES}, "علبه": "piece"}
 TEXT_COLUMNS = ("barcode", "carton_barcode", "extra_barcodes")
 
 
@@ -550,11 +553,11 @@ def import_template_xlsx(products=None) -> bytes:
             for r in range(2, 5002):
                 ws[f"{col}{r}"].number_format = "@"
     unit_col = get_column_letter(IMPORT_COLUMNS.index("unit") + 1)
-    dv = DataValidation(type="list", formula1='"حبة,كيلو"', allow_blank=True, showErrorMessage=True,
-                        errorTitle="الوحدة", error="اختار حبة أو كيلو")
+    dv = DataValidation(type="list", formula1='"' + ",".join(PIECE_NAMES + ("كيلو",)) + '"', allow_blank=True,
+                        showErrorMessage=True, errorTitle="الوحدة", error="اختار من القائمة")
     ws.add_data_validation(dv)
     dv.add(f"{unit_col}2:{unit_col}5001")
-    rows = ([[p.barcode, p.name, "كيلو" if p.unit == "kg" else "حبة", float(p.price), float(p.cost), p.carton,
+    rows = ([[p.barcode, p.name, p.unit_name, float(p.price), float(p.cost), p.carton,
               float(p.min_stock), " ".join(b.code for b in p.extra_barcodes if b.mode == "carton"),
               " ".join(b.code for b in p.extra_barcodes if b.mode != "carton")] for p in products]
             if products is not None else
@@ -633,6 +636,7 @@ async def import_products(request: Request, user=Depends(need["products"]), db: 
             errors.append(f"سطر {n}: الوحدة «{row.get('unit')}» مش مفهومة. اكتب حبة أو كيلو")
             continue
         row["unit"] = UNIT_ALIASES[unit]
+        row["piece_name"] = {"علبه": "علبة", "حبه": "حبة"}.get(unit, unit) if unit in PIECE_NAMES or unit in ("علبه", "حبه") else "حبة"
         for k in ("price", "cost", "carton", "min_stock"):
             row.setdefault(k, "0" if k != "price" else "")
             row[k] = row[k] or ("0" if k != "price" else "")
@@ -660,6 +664,56 @@ async def import_products(request: Request, user=Depends(need["products"]), db: 
     db.commit()
     flash(request, f"تم الاستيراد: {created} صنف جديد، {updated} صنف اتعدل")
     return redirect("/products")
+
+
+# ---------- barcodes: every product on one page, scan to add ----------
+
+def barcode_row(p: Product) -> dict:
+    main_mode = "kg" if p.unit == "kg" else "piece"
+    codes = [{"code": p.barcode, "mode": main_mode, "name": p.mode_name(main_mode), "main": True}]
+    codes += [{"code": b.code, "mode": b.mode, "name": p.mode_name(b.mode), "main": False} for b in p.extra_barcodes]
+    return {"id": p.id, "name": p.name, "unit": p.unit, "piece_name": p.piece_name or "حبة", "carton": p.carton,
+            "unit_name": p.unit_name, "codes": codes,
+            "missing_carton": bool(p.carton) and not any(c["mode"] == "carton" for c in codes)}
+
+
+@router.get("/barcodes", response_class=HTMLResponse)
+def barcodes(request: Request, q: str = "", show: str = "active", user=Depends(need["products"]), db: Session = Depends(get_db)):
+    stmt = select(Product).order_by(Product.name)
+    if show != "all":
+        stmt = stmt.where(Product.active.is_(True))
+    items = db.scalars(stmt).all()
+    rows = [barcode_row(p) for p in items]
+    if show == "missing":
+        rows = [r for r in rows if r["missing_carton"]]
+    if export_format(request):
+        return send_report(request, Report(
+            title="باركودات الأصناف", filename=f"barcodes-{datetime.now(TZ):%Y%m%d}",
+            tables=[Table([Col("م", "int", .4), Col("الصنف", "text", 2.6), Col("الوحدة", "text", .7), Col("حبات الكرتون", "int", .7),
+                           Col("الباركودات", "text", 3.5)],
+                          [[i, r["name"], r["unit_name"], r["carton"] or "",
+                            "  ".join(f"{c['code']} ({c['name']}{'، أساسي' if c['main'] else ''})" for c in r["codes"])]
+                           for i, r in enumerate(rows, 1)])]))
+    return render(request, "barcodes.html", {"rows": rows, "q": q, "show": show, "exportable": True,
+                                              "missing": sum(1 for p in items if barcode_row(p)["missing_carton"])})
+
+
+@router.post("/barcodes/{pid}")
+async def barcode_update(pid: int, request: Request, user=Depends(admin_only), db: Session = Depends(get_db)):
+    """JSON in, JSON out, so a scanner can add barcode after barcode without reloading the page.
+    {action: add, code, mode} | {action: remove, code} | {action: main, code} | {action: unit, unit, piece_name, carton}"""
+    p = db.get(Product, pid)
+    if not p:
+        return JSONResponse({"error": "الصنف مش موجود"}, 404)
+    data = await request.json()
+    try:
+        msg = services.barcode_action(db, p, data)
+    except services.EditError as e:
+        db.rollback()
+        return JSONResponse({"error": str(e)}, 400)
+    db.commit()
+    db.refresh(p)
+    return JSONResponse({"ok": True, "msg": msg, "row": barcode_row(p)})
 
 
 # ---------- suppliers ----------
@@ -712,7 +766,7 @@ def supplier_statement(sid: int, request: Request, d_from: str = "", d_to: str =
                 lt = []
                 for i, l in enumerate(r.lines, 1):
                     cost = l.unit_cost if l.unit_cost is not None else l.product.cost
-                    lt.append([i, l.product.name, "" if l.extra else l.ordered, l.received or 0, MODES.get(l.received_mode or l.mode, ""),
+                    lt.append([i, l.product.name, "" if l.extra else l.ordered, l.received or 0, l.product.mode_name(l.received_mode or l.mode),
                                cost, (l.received_base or 0) * cost])
                 tables.append(Table([Col("م", "int", .4), Col("الصنف", "text", 2.6), Col("المطلوب", "qty", .8), Col("المستلم", "qty", .8),
                                      Col("الوحدة", "text", .7), Col("سعر الشراء", "money", .9), Col("القيمة", "money", .9)], lt,
@@ -925,8 +979,8 @@ def receipt_detail(rid: int, request: Request, user=Depends(need["receipts"]), d
         for i, l in enumerate(r.lines, 1):
             cost = l.unit_cost if l.unit_cost is not None else l.product.cost
             d = l.diff_base
-            rows.append([i, l.product.name + (" (زائد)" if l.extra else ""), "" if l.extra else l.ordered, MODES.get(l.mode, l.mode),
-                         l.received, MODES.get(l.received_mode or l.mode, ""),
+            rows.append([i, l.product.name + (" (زائد)" if l.extra else ""), "" if l.extra else l.ordered, l.product.mode_name(l.mode),
+                         l.received, l.product.mode_name(l.received_mode or l.mode),
                          "" if d is None else ("مطابق" if d == 0 else (f"ناقص {base_text(l.product, -d)}" if d < 0 else f"زيادة {base_text(l.product, d)}")),
                          cost, (l.received_base or 0) * cost, l.note or ""])
         return send_report(request, Report(
@@ -1122,7 +1176,7 @@ def sale_detail(sid: str, request: Request, user=Depends(need["sales"]), db: Ses
                   ("الإجمالي", f"{fmt_money(s.total)} د.ك")],
             tables=[Table([Col("م", "int", .4), Col("الصنف", "text", 3), Col("الكمية", "qty", .8), Col("الوحدة", "text", .7),
                            Col("السعر", "money"), Col("الإجمالي", "money")],
-                          [[i, l.product.name, l.qty, MODES.get(l.mode, l.mode), l.unit_price, l.total] for i, l in enumerate(s.lines, 1)],
+                          [[i, l.product.name, l.qty, l.product.mode_name(l.mode), l.unit_price, l.total] for i, l in enumerate(s.lines, 1)],
                           totals=["", "الإجمالي", "", "", "", s.total])]))
     return render(request, "sale.html", {"s": s, "same": same, "flags": services.ministry_flags(db, [s])[s.id], "exportable": True,
                                          **history(db, "sales", s.id, "sale_lines", [l.id for l in s.lines])})
@@ -1425,13 +1479,13 @@ def _correct_page(request, kind, obj, rows, errors=None, reason=""):
 
 
 def _sale_rows(s, f=None):
-    return [{"id": l.id, "name": l.product.name, "unit": MODES[l.mode],
+    return [{"id": l.id, "name": l.product.name, "unit": l.product.mode_name(l.mode),
              "fields": [("q", "الكمية", f.get(f"q_{l.id}") if f else fmt_qty(l.qty, l.product.unit)),
                         ("p", "السعر", f.get(f"p_{l.id}") if f else fmt_money(l.unit_price))]} for l in s.lines]
 
 
 def _receipt_rows(r, f=None):
-    return [{"id": l.id, "name": l.product.name, "unit": MODES[l.received_mode or l.mode],
+    return [{"id": l.id, "name": l.product.name, "unit": l.product.mode_name(l.received_mode or l.mode),
              "fields": [("q", "المستلم", f.get(f"q_{l.id}") if f else fmt_qty(l.received or 0, l.product.unit))]}
             for l in r.lines]
 

@@ -44,7 +44,7 @@ class _PriceScreenState extends State<PriceScreen> {
     final seeCost = app.employee?.can('see_cost') ?? false;
     Future<void> type() => _show(typeAndFind(context, app));
     Future<void> search() => _show(searchAndPick(context, app));
-    final unit = p?.isKg == true ? 'كجم' : 'حبة';
+    final unit = p?.isKg == true ? 'كجم' : (p?.pieceName ?? 'حبة');
     return WorkScaffold(
       title: 'سعر صنف',
       onScan: (code) => _show(findScanned(context, app, code)),
@@ -65,7 +65,7 @@ class _PriceScreenState extends State<PriceScreen> {
                     const SizedBox(height: S.xs),
                     Center(
                       child: Pill(
-                        'اتمسح باركود الكرتون (${p!.carton} حبة) — سعر الكرتون ${money(p!.price * p!.carton)}',
+                        'اتمسح باركود الكرتون (${p!.carton} ${p!.pieceName}) — سعر الكرتون ${money(p!.price * p!.carton)}',
                         fg: cBlue,
                         bg: cBlue2,
                         icon: Icons.inventory_2_outlined,
@@ -87,7 +87,7 @@ class _PriceScreenState extends State<PriceScreen> {
                     ),
                   ),
                   const SizedBox(height: S.m),
-                  if (p!.carton > 0) _kv('الكرتون (${p!.carton} حبة)', '${money(p!.price * p!.carton)} ${W.currency}'),
+                  if (p!.carton > 0) _kv('الكرتون (${p!.carton} ${p!.pieceName})', '${money(p!.price * p!.carton)} ${W.currency}'),
                   if (seeCost) _kv('سعر الشراء', '${money(p!.cost)} ${W.currency} / $unit'),
                   if (seeCost && p!.carton > 0) _kv('شراء الكرتون', '${money(p!.cost * p!.carton)} ${W.currency}'),
                   _kv('الرصيد على الجهاز', p!.baseText(p!.stock)),

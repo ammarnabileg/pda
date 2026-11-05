@@ -48,6 +48,8 @@ DEFAULT_ROLES = [
 ADMIN_ROLE = "admin"  # always has every permission, so the system can never lock everyone out
 UNITS = {"piece": "حبة", "kg": "كجم"}
 MODES = {"piece": "حبة", "carton": "كرتون", "kg": "كجم"}
+# What one "piece" of a product is called (as on the ministry invoice): حبة for tomato paste, علبة for milk powder.
+PIECE_NAMES = ("حبة", "علبة", "كيس", "زجاجة", "باكيت")
 
 
 def now():
@@ -130,6 +132,7 @@ class Product(Base):
     price: Mapped[Decimal] = mapped_column(Money, default=0)
     cost: Mapped[Decimal] = mapped_column(Money, default=0)
     carton: Mapped[int] = mapped_column(Integer, default=0)
+    piece_name: Mapped[str] = mapped_column(String(12), default="حبة", server_default="حبة")
     stock: Mapped[Decimal] = mapped_column(Qty, default=0)
     min_stock: Mapped[Decimal] = mapped_column(Qty, default=0)
     active: Mapped[bool] = mapped_column(Boolean, default=True)
@@ -139,6 +142,14 @@ class Product(Base):
     extra_barcodes: Mapped[list["ProductBarcode"]] = relationship(
         back_populates="product", cascade="all, delete-orphan", order_by="ProductBarcode.id"
     )
+
+    def mode_name(self, mode: str) -> str:
+        """كرتون / كجم / the product's own piece name (علبة, حبة ...)."""
+        return (self.piece_name or "حبة") if mode == "piece" else MODES.get(mode, mode)
+
+    @property
+    def unit_name(self) -> str:
+        return "كيلو" if self.unit == "kg" else (self.piece_name or "حبة")
 
     def to_base(self, qty, mode):
         qty = Decimal(str(qty))

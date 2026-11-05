@@ -1,7 +1,7 @@
 """JSON API used by the PDA devices."""
 from datetime import timedelta
 
-from fastapi import APIRouter, Depends, File, Form, Header, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, File, Form, Header, HTTPException, Request, UploadFile
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -79,4 +79,27 @@ async def receipt_file(receipt_client_id: str = Form(...), file_id: str = Form(.
         raise HTTPException(422, str(e))
     db.commit()
     return {"ok": True, "id": f.id}
+
+
+@router.post("/products/{pid}/barcodes")
+async def product_barcodes(pid: int, request: Request, device: Device = Depends(current_device), db: Session = Depends(get_db)):
+    """The barcodes screen on the device: admin only, online only (applied at once, so devices never disagree)."""
+    from .models import Employee, Product
+
+    data = await request.json()
+    emp = db.get(Employee, int(data.get("employee_id") or 0))
+    if emp is None or not emp.active or not emp.is_admin:
+        raise HTTPException(403, "admin_only")
+    p = db.get(Product, pid)
+    if p is None:
+        raise HTTPException(404, "unknown_product")
+    services.set_actor(db, f"emp:{emp.id}")
+    try:
+        msg = services.barcode_action(db, p, data)
+    except services.EditError as e:
+        db.rollback()
+        return {"ok": False, "error": str(e)}
+    db.commit()
+    db.refresh(p)
+    return {"ok": True, "msg": msg, "product": services.product_dict(p)}
 

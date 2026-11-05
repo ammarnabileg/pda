@@ -21,7 +21,7 @@
 {% for p in items %}
 {% set is_low = p.min_stock > 0 and p.stock <= p.min_stock %}
 <tr><td class="num">{{ offset + loop.index }}</td><td><a href="/products/{{ p.id }}">{{ p.name }}</a> {% if not p.active %}<span class="pill p-gray">موقوف</span>{% endif %}</td>
-<td dir="ltr" style="text-align:right">{{ p.barcode }}{% if p.extra_barcodes %} <span class="pill p-info" title="{% for b in p.extra_barcodes %}{{ b.code }} ({{ MODES[b.mode] }}) {% endfor %}">+{{ p.extra_barcodes|length }}</span>{% endif %}</td>
+<td dir="ltr" style="text-align:right">{{ p.barcode }}{% if p.extra_barcodes %} <span class="pill p-info" title="{% for b in p.extra_barcodes %}{{ b.code }} ({{ p.mode_name(b.mode) }}) {% endfor %}">+{{ p.extra_barcodes|length }}</span>{% endif %}</td>
 <td>{% if p.unit == 'kg' %}بالكيلو{% else %}حبة{% if p.carton %} · كرتون {{ p.carton }}{% endif %}{% endif %}</td>
 <td class="num">{{ p.price|money }}{% if p.carton %}<div class="muted" style="font-size:13px">كرتون {{ (p.price * p.carton)|money }}</div>{% endif %}</td>
 <td class="num">{{ p.cost|money }}</td>

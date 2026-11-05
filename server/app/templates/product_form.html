@@ -22,6 +22,8 @@
     <div class="grid">
       <div class="{{ fcls('unit') }}"><label for="unit">بيتباع</label>
         <select name="unit" id="unit"><option value="piece" {{ 'selected' if unit == 'piece' }}>بالحبة</option><option value="kg" {{ 'selected' if unit == 'kg' }}>بالكيلو (موزون)</option></select>{{ err('unit') }}</div>
+      {% set pn = (form.get('piece_name') if form else (p.piece_name if p else 'حبة')) or 'حبة' %}
+      <div class="field" id="piece-name-field"><label for="piece_name">اسم الوحدة</label><select name="piece_name" id="piece_name">{% for n in PIECE_NAMES %}<option {{ 'selected' if n == pn }}>{{ n }}</option>{% endfor %}</select><div class="hint">زي فاتورة الوزارة: علبة للحليب، حبة لمعجون الطماطم</div></div>
       <div class="{{ fcls('carton') }}" id="carton-field"><label for="carton">عدد الحبات في الكرتون</label><input id="carton" name="carton" value="{{ v('carton', '0') }}" inputmode="numeric">{{ err('carton') }}<div class="hint">0 لو الصنف مالوش كرتون</div></div>
       <div class="{{ fcls('barcode') }}"><label for="barcode">الباركود الأساسي (<span id="main-unit">{{ 'الكيلو' if unit == 'kg' else 'الحبة' }}</span>)</label><input id="barcode" name="barcode" value="{{ v('barcode') }}" required dir="ltr">{{ err('barcode') }}<div class="hint">امسحه بقارئ الباركود أو اكتبه</div></div>
     </div>
@@ -98,6 +100,7 @@ function addBarcode() {
 function sync() {
   const kg = unitSel.value === 'kg'
   cartonField.style.display = kg ? 'none' : ''
+  $('piece-name-field').style.display = kg ? 'none' : ''
   $('main-unit').textContent = kg ? 'الكيلو' : 'الحبة'
   document.querySelectorAll('.per-unit').forEach(e => e.textContent = kg ? 'للكيلو' : 'للحبة')
   document.querySelectorAll('.base-unit').forEach(e => e.textContent = kg ? 'كجم' : 'حبة')

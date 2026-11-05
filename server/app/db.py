@@ -117,6 +117,7 @@ UPGRADES = [
             END $$""",
         f"CREATE UNIQUE INDEX IF NOT EXISTS {table}_no ON {table} (no)",
       )],
+    "ALTER TABLE products ADD COLUMN IF NOT EXISTS piece_name VARCHAR(12) NOT NULL DEFAULT 'حبة'",
     "ALTER TABLE sales ADD COLUMN IF NOT EXISTS ministry_invoice_no VARCHAR(30)",
     "ALTER TABLE sales ADD COLUMN IF NOT EXISTS ministry_total NUMERIC(12, 3)",
     "CREATE INDEX IF NOT EXISTS ix_sales_ministry_invoice_no ON sales (ministry_invoice_no)",

@@ -956,6 +956,7 @@ Future<PadResult?> numberPad(
   bool allowZero = false,
   bool barcode = false,
   int carton = 0,
+  String pieceName = 'حبة',
   String? Function(int qtyMilli, String mode)? preview,
   String ok = 'حفظ',
 }) {
@@ -970,6 +971,7 @@ Future<PadResult?> numberPad(
       allowZero: allowZero,
       barcode: barcode,
       carton: carton,
+      pieceName: pieceName,
       preview: preview,
       ok: ok,
     ),
@@ -991,6 +993,7 @@ class _NumberPad extends StatefulWidget {
   final int? initial;
   final bool allowZero, barcode;
   final int carton;
+  final String pieceName;
   final String? Function(int qtyMilli, String mode)? preview;
   final String ok;
   const _NumberPad({
@@ -1002,6 +1005,7 @@ class _NumberPad extends StatefulWidget {
     required this.allowZero,
     required this.barcode,
     this.carton = 0,
+    this.pieceName = 'حبة',
     this.preview,
     required this.ok,
   });
@@ -1190,7 +1194,7 @@ class _NumberPadState extends State<_NumberPad> {
                           mode = m;
                           if (m != 'kg' && value.contains('.')) value = value.split('.')[0];
                         }),
-                        label: Text(unitNames[m]!),
+                        label: Text(m == 'piece' ? widget.pieceName : unitNames[m]!),
                       ),
                     ),
                   ),
@@ -1200,7 +1204,7 @@ class _NumberPadState extends State<_NumberPad> {
           if (widget.carton > 0)
             Padding(
               padding: const EdgeInsets.only(top: S.xs),
-              child: Text('الكرتون = ${widget.carton} حبة', textAlign: TextAlign.center, style: T.sub),
+              child: Text('الكرتون = ${widget.carton} ${widget.pieceName}', textAlign: TextAlign.center, style: T.sub),
             ),
           const SizedBox(height: S.s),
         ],
@@ -1221,7 +1225,10 @@ class _NumberPadState extends State<_NumberPad> {
                 textDirection: TextDirection.ltr,
                 style: TextStyle(fontSize: 34, fontWeight: FontWeight.w800, color: value.isEmpty ? const Color(0xFFB8C2BD) : cInk),
               ),
-              if (!widget.barcode) ...[const SizedBox(width: S.s), Text(unitNames[mode]!, style: T.heading.copyWith(color: cMuted))],
+              if (!widget.barcode) ...[
+                const SizedBox(width: S.s),
+                Text(mode == 'piece' ? widget.pieceName : unitNames[mode]!, style: T.heading.copyWith(color: cMuted)),
+              ],
             ],
           ),
         ),

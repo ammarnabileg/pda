@@ -51,6 +51,17 @@ Future<LocalDb> seededDb() async {
         'active': true,
       },
       {
+        'id': 4,
+        'barcode': '6281000444444',
+        'name': 'حليب بودرة',
+        'unit': 'piece',
+        'piece_name': 'علبة',
+        'price': '1.050',
+        'carton': 12,
+        'stock': '30',
+        'active': true,
+      },
+      {
         'id': 3,
         'barcode': '6281000999999',
         'name': 'زيت زيتون إسباني بكر ممتاز معصور على البارد عبوة زجاجية ٧٥٠ مل',
@@ -75,6 +86,7 @@ Future<LocalDb> seededDb() async {
     'employees': [
       {'id': 1, 'name': 'أحمد', 'role': 'cashier', 'pin_salt': salt, 'pin_hash': hashPin('2222', salt), 'active': true},
       {'id': 2, 'name': 'محمود', 'role': 'storekeeper', 'pin_salt': salt, 'pin_hash': hashPin('3333', salt), 'active': true},
+      {'id': 9, 'name': 'المدير', 'role': 'admin', 'pin_salt': salt, 'pin_hash': hashPin('9999', salt), 'active': true},
       {
         'id': 3,
         'name': 'سعاد',
@@ -759,6 +771,49 @@ void main() {
     await tester.tap(find.text('ابدأ البيع'));
     await settle(tester);
     expect(find.text('فاتورة الوزارة دي اتصرفت قبل كده'), findsOneWidget);
+    await tester.pump(const Duration(seconds: 30));
+  });
+
+  testWidgets('a product sold by the can says علبة, not حبة', (tester) async {
+    await startApp(tester);
+    await login(tester, 'أحمد', '2222');
+    await openSale(tester);
+    await scan(tester, '6281000444444');
+    await settle(tester);
+    await scan(tester, '6281000444444');
+    await settle(tester);
+    await noToast(tester);
+    expect(find.widgetWithText(QtyStepper, '2 علبة'), findsOneWidget);
+    expect(find.textContaining('حبة'), findsNothing);
+    await tester.pump(const Duration(seconds: 30));
+  });
+
+  testWidgets('barcodes screen: admin only, scan the product then its new barcode', (tester) async {
+    await startApp(tester);
+    await login(tester, 'أحمد', '2222');
+    expect(find.text('الباركودات'), findsNothing, reason: 'cashiers do not change barcodes');
+    await tester.tap(find.text(W.switchUser));
+    await settle(tester);
+    await login(tester, 'المدير', '9999');
+    await tester.ensureVisible(find.text('الباركودات'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('الباركودات'));
+    await settle(tester);
+    expect(find.textContaining('امسح الصنف اللي عايز تعدّل باركوداته'), findsOneWidget);
+    await scan(tester, '6281000444444');
+    await settle(tester);
+    expect(find.text('حليب بودرة'), findsOneWidget);
+    expect(find.text('الوحدة: علبة'), findsOneWidget);
+    expect(find.text('6281000444444'), findsOneWidget);
+    // No carton barcode yet: the next scan is set to carton.
+    final seg = tester.widget<SegmentedButton<String>>(find.byKey(const Key('add_mode')));
+    expect(seg.selected, {'carton'});
+    // No real server in widget tests (flutter_test answers every request with 400): nothing is saved,
+    // and the screen says so. The real save is covered by test/server_sync_test.dart.
+    await scan(tester, '16281000444444');
+    await settle(tester);
+    expect(find.byWidgetPredicate((w) => w is Text && (w.data ?? '').contains(RegExp('متصل بالشبكة|جرّب تاني'))), findsOneWidget);
+    expect(find.text('16281000444444'), findsNothing);
     await tester.pump(const Duration(seconds: 30));
   });
 }
