@@ -600,6 +600,7 @@ class _InvoiceSheetState extends State<_InvoiceSheet> {
         maxLength: 60,
         style: T.heading,
         textInputAction: TextInputAction.next,
+        onTapOutside: (_) => hideKeyboard(),
         decoration: InputDecoration(labelText: 'رقم فاتورة الشركة', errorText: noError, counterText: ''),
       ),
       TextField(
@@ -607,7 +608,11 @@ class _InvoiceSheetState extends State<_InvoiceSheet> {
         controller: totalCtl,
         keyboardType: const TextInputType.numberWithOptions(decimal: true),
         textInputAction: TextInputAction.done,
-        onSubmitted: (_) => _ok(),
+        onTapOutside: (_) => hideKeyboard(),
+        onSubmitted: (_) {
+          hideKeyboard();
+          _ok();
+        },
         decoration: InputDecoration(labelText: 'إجمالي الفاتورة (${W.currency}) — اختياري', errorText: totalError),
       ),
       const SizedBox(height: S.s),

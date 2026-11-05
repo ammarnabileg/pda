@@ -145,7 +145,9 @@ class _ReceiveListScreenState extends State<ReceiveListScreen> {
                     padding: const EdgeInsets.only(bottom: S.s),
                     child: TextField(
                       onChanged: (v) => setState(() => query = v.trim()),
-                      onTapOutside: (_) => FocusManager.instance.primaryFocus?.unfocus(),
+                      textInputAction: TextInputAction.done,
+                      onSubmitted: (_) => hideKeyboard(),
+                      onTapOutside: (_) => hideKeyboard(),
                       decoration: InputDecoration(
                         isDense: true,
                         prefixIcon: const Icon(Icons.search),
@@ -556,7 +558,9 @@ class _ReceiveScreenState extends State<ReceiveScreen> {
                     freeNote = v;
                     _save();
                   },
-                  onTapOutside: (_) => FocusManager.instance.primaryFocus?.unfocus(),
+                  textInputAction: TextInputAction.done,
+                  onSubmitted: (_) => hideKeyboard(),
+                  onTapOutside: (_) => hideKeyboard(),
                   decoration: InputDecoration(
                     hintText: 'ملاحظة تانية، مثال: 3 علب زيت تالفة',
                     filled: true,

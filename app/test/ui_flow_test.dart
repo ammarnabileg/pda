@@ -739,6 +739,31 @@ void main() {
     expect(find.textContaining('لجنة 3 · جرد يوم'), findsOneWidget);
   });
 
+  testWidgets('the number sheets sit above the keyboard, and Enter closes it', (tester) async {
+    await startApp(tester);
+    await login(tester, 'أحمد', '2222');
+    await tester.tap(find.text('بيع'));
+    await settle(tester);
+    await waitFor(tester, find.byKey(const Key('ministry_no')));
+    await tester.pumpAndSettle();
+    // Android reports a keyboard 300 px tall.
+    tester.view.viewInsets = const FakeViewPadding(bottom: 300);
+    addTearDown(tester.view.resetViewInsets);
+    await tester.pumpAndSettle();
+    final screen = tester.view.physicalSize.height / tester.view.devicePixelRatio;
+    final keyboardTop = screen - 300 / tester.view.devicePixelRatio;
+    for (final k in ['ministry_no', 'ministry_total']) {
+      expect(tester.getRect(find.byKey(Key(k))).bottom, lessThanOrEqualTo(keyboardTop), reason: '$k is hidden under the keyboard');
+    }
+    expect(tester.getRect(find.text('ابدأ البيع')).bottom, lessThanOrEqualTo(keyboardTop));
+    await tester.enterText(find.byKey(const Key('ministry_no')), '168126059405');
+    await tester.enterText(find.byKey(const Key('ministry_total')), '1.250');
+    await tester.testTextInput.receiveAction(TextInputAction.done);
+    await settle(tester);
+    expect(FocusManager.instance.primaryFocus?.context?.widget is EditableText, isFalse, reason: 'the keyboard stays open');
+    expect(find.byKey(const Key('ministry_no')), findsNothing);
+  });
+
   testWidgets('ministry invoice: required, compared with its total, never sold twice on one device', (tester) async {
     await startApp(tester);
     await login(tester, 'أحمد', '2222');

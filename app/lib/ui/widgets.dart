@@ -835,10 +835,25 @@ Future<R?> _sheet<R>(BuildContext context, Widget child, {bool dismissible = tru
   enableDrag: dismissible,
   backgroundColor: cSurface,
   shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(18))),
-  builder: (_) => SafeArea(
-    child: SingleChildScrollView(padding: const EdgeInsets.fromLTRB(S.m, S.m, S.m, S.m), child: child),
+  // The sheet rises above the on-screen keyboard instead of hiding under it,
+  // and a tap on empty sheet space closes the keyboard.
+  builder: (ctx) => Padding(
+    padding: EdgeInsets.only(bottom: MediaQuery.viewInsetsOf(ctx).bottom),
+    child: GestureDetector(
+      behavior: HitTestBehavior.translucent,
+      onTap: hideKeyboard,
+      child: SafeArea(
+        child: SingleChildScrollView(padding: const EdgeInsets.fromLTRB(S.m, S.m, S.m, S.m), child: child),
+      ),
+    ),
   ),
-);
+).whenComplete(hideKeyboard);
+
+/// Closes the on-screen keyboard (drops focus and tells Android to hide it).
+void hideKeyboard() {
+  FocusManager.instance.primaryFocus?.unfocus();
+  SystemChannels.textInput.invokeMethod<void>('TextInput.hide');
+}
 
 /// Bottom sheet with the app's standard look.
 Future<R?> showAppSheet<R>(BuildContext context, Widget child) => _sheet<R>(context, child);

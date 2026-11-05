@@ -343,7 +343,9 @@ class _CountScreenState extends State<CountScreen> {
                       padding: const EdgeInsets.only(bottom: S.s),
                       child: TextField(
                         onChanged: (v) => setState(() => filter = v.trim()),
-                        onTapOutside: (_) => FocusManager.instance.primaryFocus?.unfocus(),
+                        textInputAction: TextInputAction.done,
+                        onSubmitted: (_) => hideKeyboard(),
+                        onTapOutside: (_) => hideKeyboard(),
                         decoration: InputDecoration(
                           isDense: true,
                           prefixIcon: const Icon(Icons.search),
@@ -502,7 +504,11 @@ class _CountHeaderSheetState extends State<_CountHeaderSheet> {
         maxLength: 20,
         style: T.heading,
         textInputAction: TextInputAction.done,
-        onSubmitted: (_) => _ok(),
+        onTapOutside: (_) => hideKeyboard(),
+        onSubmitted: (_) {
+          hideKeyboard();
+          _ok();
+        },
         decoration: InputDecoration(labelText: 'رقم اللجنة', errorText: error, counterText: ''),
       ),
       const SizedBox(height: S.s),

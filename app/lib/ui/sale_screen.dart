@@ -452,7 +452,9 @@ class _SaleScreenState extends State<SaleScreen> {
                     padding: const EdgeInsets.only(bottom: S.s),
                     child: TextField(
                       onChanged: (v) => setState(() => filter = v.trim()),
-                      onTapOutside: (_) => FocusManager.instance.primaryFocus?.unfocus(),
+                      textInputAction: TextInputAction.done,
+                      onSubmitted: (_) => hideKeyboard(),
+                      onTapOutside: (_) => hideKeyboard(),
                       decoration: InputDecoration(
                         isDense: true,
                         prefixIcon: const Icon(Icons.search),
@@ -645,6 +647,7 @@ class _MinistrySheetState extends State<_MinistrySheet> {
         style: T.heading,
         textDirection: TextDirection.ltr,
         textInputAction: TextInputAction.next,
+        onTapOutside: (_) => hideKeyboard(),
         decoration: InputDecoration(labelText: 'رقم فاتورة الوزارة', errorText: noError, counterText: ''),
       ),
       TextField(
@@ -652,7 +655,11 @@ class _MinistrySheetState extends State<_MinistrySheet> {
         controller: totalCtl,
         keyboardType: const TextInputType.numberWithOptions(decimal: true),
         textInputAction: TextInputAction.done,
-        onSubmitted: (_) => _ok(),
+        onTapOutside: (_) => hideKeyboard(),
+        onSubmitted: (_) {
+          hideKeyboard();
+          _ok();
+        },
         decoration: InputDecoration(labelText: 'إجمالي الفاتورة (${W.currency}) — اختياري', errorText: totalError),
       ),
       const SizedBox(height: S.s),
